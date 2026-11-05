@@ -1,5 +1,8 @@
 import { NAME_MAX_LEN } from '../../../shared/constants';
+import { POWERS, powerDef } from '../../../shared/powers';
+import type { PowerId } from '../../../shared/powers';
 import { SKINS, skinById } from '../../../shared/skins';
+import { POWER_ICON } from './powerIcons';
 import type { Skin } from '../../../shared/skins';
 import { audio } from '../audio/Audio';
 import { IS_TOUCH } from '../config';
@@ -92,6 +95,7 @@ export class UI {
             <div class="skin-name" data-el="skinName">Mochi<small>Free</small></div>
             <button class="btn icon ghost small" data-act="next" aria-label="Next skin">${ICON.right}</button>
           </div>
+          <button class="btn ghost small power-pick" data-act="powers" data-el="powerPick"></button>
         </div>
         <div class="menu-col">
           <input class="name-input" data-el="name" maxlength="${NAME_MAX_LEN}" placeholder="your name" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go" />
@@ -168,6 +172,12 @@ export class UI {
           break;
         case 'howto':
           this.openHowTo();
+          break;
+        case 'powers':
+          this.openPowers();
+          break;
+        case 'pickpower':
+          this.pickPower(t.dataset.id as PowerId);
           break;
         case 'close':
           this.closeModal();
@@ -274,7 +284,40 @@ export class UI {
 
   // ───────────────────────────────────────── profile / skins
 
+  private refreshPower(): void {
+    const p = powerDef(this.profile.data.power);
+    this.el.powerPick.innerHTML = `<span style="color:var(--muted)">POWER</span><span class="pi" style="background:${p.color}">${POWER_ICON[p.id]}</span>${esc(p.name)} <span style="opacity:.6">▸</span>`;
+  }
+
+  private openPowers(): void {
+    const sel = this.profile.data.power;
+    const cards = POWERS.map((p) => {
+      const ok = this.profile.isPowerUnlocked(p.id);
+      return `<div class="power-card ${p.id === sel ? 'sel' : ''} ${ok ? '' : 'locked'}" data-act="pickpower" data-id="${p.id}">
+        ${ok ? '' : `<span class="lock">LVL ${p.unlockLevel}</span>`}
+        <div class="pc-ic" style="background:${p.color}">${POWER_ICON[p.id]}</div>
+        <b>${esc(p.name)}</b><span>${esc(p.blurb)}</span></div>`;
+    }).join('');
+    const cur = powerDef(sel);
+    this.openModal(`<h2>Powers</h2><div class="power-grid">${cards}</div>
+      <div class="power-detail"><b>${esc(cur.name)}</b> · ${cur.cooldown}s cooldown<br>${esc(cur.how)}</div>`);
+  }
+
+  private pickPower(id: PowerId): void {
+    if (!this.profile.isPowerUnlocked(id)) {
+      this.toast(`Reach level ${powerDef(id).unlockLevel} to unlock ${powerDef(id).name}`);
+      haptic('fail');
+      return;
+    }
+    this.profile.data.power = id;
+    this.profile.save();
+    haptic('tick');
+    this.refreshPower();
+    this.openPowers();
+  }
+
   refreshProfile(): void {
+    this.refreshPower();
     const d = this.profile.data;
     this.el.lvl.textContent = String(d.level);
     (this.el.xp as HTMLElement).style.width = `${Math.round((d.xp / xpToNext(d.level)) * 100)}%`;
@@ -393,6 +436,7 @@ export class UI {
       <div class="howto-item"><div class="ic" style="color:var(--pink)">»</div><p>${surge}: faster, and your orbit swings wide to snipe. It burns mass — and opens gaps in your guard.</p></div>
       <div class="howto-item"><div class="ic" style="color:var(--mint)">✕</div><p>Moons that collide <b>shatter</b>. Grab loose moons after a bite to steal them. Never touch the <b>red rim</b>.</p></div>
       <div class="howto-item"><div class="ic" style="color:#FFE45C">★</div><p><b>Starfall</b> drops a pile of gold dust somewhere on the map. Everyone sees it. Be first.</p></div>
+      <div class="howto-item"><div class="ic" style="color:#C49BFF">✧</div><p>Pick a <b>Power</b> before you play — wormholes, phantoms, snares, disguises, blackouts. ${IS_TOUCH ? 'Tap the <b>power button</b>' : 'Press <b>E</b> or <b>right-click</b>'} to use it. Get creative.</p></div>
       <div class="howto-item"><div class="ic" style="color:#FF2B4A">☾</div><p>During a <b>Blood Moon</b> the lights go out and <b>wraiths</b> hunt you. Your moons only slow them. Grab a <b>☀ sunstone</b> to turn Radiant and banish them.</p></div>
     </div>`);
   }

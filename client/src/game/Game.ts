@@ -1,5 +1,7 @@
 import { SURGE_MIN_MASS, SURGE_ORBIT_MULT, coreRadius } from '../../../shared/constants';
 import { clamp } from '../../../shared/math';
+import { BUBBLE_SECS, powerDef } from '../../../shared/powers';
+import { POWER_ICON } from '../ui/powerIcons';
 import { skinById } from '../../../shared/skins';
 import type { GameEvent } from '../../../shared/world';
 import { audio } from '../audio/Audio';
@@ -30,6 +32,7 @@ interface Life {
   banished: number;
   dawns: number;
   radiantUntil: number;
+  tricks: number;
 }
 
 const STREAK_CALLS = ['', 'BITE!', 'DOUBLE BITE!', 'TRIPLE BITE!', 'RAMPAGE!', 'UNSTOPPABLE!', 'MOON LORD!'];
@@ -62,6 +65,11 @@ export class Game {
   private onlineOk = false;
   private tutorialClock = 0;
   private heartbeat = 0;
+  private pw = { cdUntil: 0, cdTotal: 1, armed: false };
+  private myDecoys = new Set<number>();
+  private disguised = false;
+  private disguiseOffAt = 0;
+  private wasBlind = false;
   private bloodHintUntil = 0;
   private readonly debugBlood = new URLSearchParams(location.search).has('bloodmoon');
 
@@ -79,6 +87,7 @@ export class Game {
       onSettings: (s) => this.applySettings(s),
     });
     this.input = new Input(canvas, uiRoot);
+    this.input.onPower = () => this.pressPower();
     this.renderer.cinematic.onImpact = (v) => {
       audio.cine(v, 'impact');
       haptic('heavy');
@@ -103,7 +112,7 @@ export class Game {
   }
 
   private freshLife(): Life {
-    return { kills: 0, moonsBroken: 0, peak: 0, start: performance.now(), captures: 0, dust: 0, bestRank: 99, lastMoons: -1, streak: 0, hadCrown: false, banished: 0, dawns: 0, radiantUntil: 0 };
+    return { kills: 0, moonsBroken: 0, peak: 0, start: performance.now(), captures: 0, dust: 0, bestRank: 99, lastMoons: -1, streak: 0, hadCrown: false, banished: 0, dawns: 0, radiantUntil: 0, tricks: 0 };
   }
 
   private applySettings(s: Settings): void {
@@ -136,7 +145,7 @@ export class Game {
     if (this.onlineOk && this.onlineUrl) {
       this.state = 'connecting';
       this.ui.setConnecting(true);
-      const net = await NetSession.connect(this.onlineUrl, name, skin);
+      const net = await NetSession.connect(this.onlineUrl, name, skin, this.profile.data.power);
       this.ui.setConnecting(false);
       if (net) {
         this.session = net;
@@ -148,7 +157,7 @@ export class Game {
       this.ui.toast('Servers unreachable — playing the offline arena');
     }
     this.session = this.local;
-    this.local.spawn(name, skin);
+    this.local.spawn(name, skin, this.profile.data.power);
     this.startLife();
   }
 
@@ -162,6 +171,12 @@ export class Game {
     this.ui.setNetBadge(this.session.kind === 'online' ? 'online' : 'offline arena');
     this.input.reset();
     this.input.setVisible(true);
+    const pd = powerDef(this.profile.data.power);
+    this.input.setPowerIcon(POWER_ICON[pd.id], pd.color);
+    this.pw = { cdUntil: 0, cdTotal: 1, armed: false };
+    this.myDecoys.clear();
+    this.disguised = false;
+    this.wasBlind = false;
     audio.setIntensity(1);
     if (this.debugBlood && this.session === this.local) this.local.triggerBloodMoon(7);
   }
@@ -172,7 +187,7 @@ export class Game {
       this.toMenu();
       return;
     }
-    this.session.spawn(this.ui.playerName, this.profile.data.skin);
+    this.session.spawn(this.ui.playerName, this.profile.data.skin, this.profile.data.power);
     this.startLife();
   }
 
@@ -211,7 +226,18 @@ export class Game {
       dust: this.life.dust,
       banished: this.life.banished,
       dawns: this.life.dawns,
+      tricks: this.life.tricks,
     };
+  }
+
+  private pressPower(): void {
+    if (this.state !== 'playing' || !this.me()) return;
+    if (!this.pw.armed && performance.now() < this.pw.cdUntil) {
+      audio.denied();
+      haptic('tick');
+      return;
+    }
+    this.session.usePower();
   }
 
   private onDeath(cause: 'bite' | 'rim' | 'lost' | 'wraith', killer: string, killerSkin: number | null = null): void {
@@ -297,7 +323,14 @@ export class Game {
 
     const board = this.session.board();
     const crownId = board[0]?.id ?? null;
-    this.renderer.render(this.session, dt * Math.max(timeScale, 0.3), { meId: this.session.meId, crownId, attract: this.state === 'menu' });
+    this.renderer.render(this.session, dt * Math.max(timeScale, 0.3), {
+      meId: this.session.meId,
+      crownId,
+      attract: this.state === 'menu',
+      myDecoys: this.myDecoys,
+      disguised: this.disguised,
+    });
+    if (this.state !== 'playing') this.renderer.blind = Math.max(0, this.renderer.blind - dt * 2);
 
     if (this.state === 'playing' || this.state === 'dying') this.updateHud(me, board, crownId, dt);
     audio.setHorror(this.state === 'playing' || this.state === 'dying' ? this.renderer.horror : 0);
@@ -382,6 +415,24 @@ export class Game {
     }
     audio.setIntensity(1 + danger);
 
+    // power button state
+    const now = performance.now();
+    const left = Math.max(0, this.pw.cdUntil - now) / 1000;
+    this.input.setPowerState(this.pw.armed ? 0 : left / Math.max(0.1, this.pw.cdTotal), this.pw.armed);
+
+    // caught in someone else's Blackout?
+    let blind = false;
+    for (const b of this.session.blackouts) {
+      if (b.owner !== me.id && (me.x - b.x) ** 2 + (me.y - b.y) ** 2 < b.r * b.r) blind = true;
+    }
+    this.renderer.blind += ((blind ? 1 : 0) - this.renderer.blind) * Math.min(1, dt * (blind ? 6 : 2));
+    if (blind && !this.wasBlind) {
+      this.ui.announce('BLACKOUT!', 'someone cut your lights', 'pink');
+      audio.power('blackout');
+      haptic('medium');
+    }
+    this.wasBlind = blind;
+
     this.rankTimer -= dt;
     if (this.rankTimer <= 0) {
       this.rankTimer = 0.5;
@@ -412,7 +463,7 @@ export class Game {
 
   private tutorial(me: ViewCore, dt: number): void {
     const p = this.profile.data;
-    if (p.tutorialSteps >= 3) {
+    if (p.tutorialSteps >= 4) {
       this.ui.hint(null);
       return;
     }
@@ -433,6 +484,12 @@ export class Game {
         else this.ui.hint('Keep eating — <b>surge</b> unlocks at 30 mass');
         if (this.input.surgedOnce && me.mass > SURGE_MIN_MASS) this.advanceTutorial();
         break;
+      case 3: {
+        const pd = powerDef(p.power);
+        this.ui.hint(`${IS_TOUCH ? 'Tap the <b>power button</b>' : 'Press <b>E</b> / right-click'} to use <b>${pd.name}</b> — ${pd.blurb.toLowerCase()}`);
+        if (this.pw.cdUntil > 0 || this.pw.armed) this.advanceTutorial();
+        break;
+      }
     }
   }
 
@@ -515,6 +572,10 @@ export class Game {
           });
           audio.cine('', 'start');
         }
+        if (byMe && playing && performance.now() - this.disguiseOffAt < 120) {
+          this.life.tricks++;
+          rend.floatText(e.x, e.y - 60, 'MIMIC BITE!', '#FF9F43', 26);
+        }
         if (byMe && playing) {
           this.life.kills++;
           this.life.streak = e.streak;
@@ -571,6 +632,89 @@ export class Game {
       }
       case 'spawn':
         break;
+      case 'power': {
+        if (e.kind === 'bubble') rend.bubble(e.core, BUBBLE_SECS);
+        if (e.core === meId) {
+          if (e.phase === 'armed') {
+            this.pw.armed = true;
+            rend.floatText(this.me()?.x ?? 0, (this.me()?.y ?? 0) - 50, 'PORTAL SET', '#B9A6FF', 20);
+          } else {
+            this.pw.armed = false;
+            this.pw.cdUntil = performance.now() + e.cd * 1000;
+            this.pw.cdTotal = Math.max(0.1, e.cd);
+          }
+          if (e.phase !== 'expire' && playing) {
+            audio.power(e.kind);
+            haptic('light');
+          }
+        } else if (playing && e.kind !== 'blackout' && this.nearness(this.session.cores.get(e.core)?.x ?? 1e9, this.session.cores.get(e.core)?.y ?? 1e9) > 0.5) {
+          audio.power(e.kind);
+        }
+        break;
+      }
+      case 'warp': {
+        rend.effects.ring(e.fx, e.fy, '#7C5CFF', 90, 4, 0.35, 8);
+        rend.effects.ring(e.x, e.y, '#62F2FF', 6, 120, 0.45, 8);
+        rend.effects.spark(e.x, e.y, '#B9A6FF', 16, 500, 0.45);
+        for (let i = 0; i <= 10; i++) {
+          const k = i / 10;
+          rend.effects.dot(e.fx + (e.x - e.fx) * k, e.fy + (e.y - e.fy) * k, 0, 0, 'rgba(124,92,255,0.7)', 8, 0.35 + k * 0.2);
+        }
+        if (playing) audio.warp(Math.max(this.nearness(e.x, e.y), this.nearness(e.fx, e.fy)));
+        if (e.core === meId) {
+          haptic('medium');
+          rend.addShake(0.2);
+        }
+        break;
+      }
+      case 'decoy': {
+        if (e.core === meId) {
+          this.myDecoys.add(e.decoy);
+          const me = this.me();
+          if (me) rend.floatText(me.x, me.y - 50, 'PHANTOM!', '#C49BFF', 22);
+        }
+        break;
+      }
+      case 'decoyPop': {
+        this.myDecoys.delete(e.id);
+        rend.effects.ring(e.x, e.y, '#C49BFF', 10, 90, 0.4, 6);
+        for (let i = 0; i < 10; i++) rend.effects.dot(e.x, e.y, (Math.random() - 0.5) * 220, (Math.random() - 0.5) * 220, 'rgba(196,155,255,0.6)', 12, 0.6);
+        if (e.owner === meId && e.by !== null && playing) {
+          this.life.tricks++;
+          this.ui.announce('FOOLED!', `${e.byName} bit your phantom`, 'mint');
+          audio.fooled();
+          haptic('success');
+        } else if (e.by === meId && playing) {
+          rend.floatText(e.x, e.y - 30, 'DECOY!', '#FF5C8A', 26);
+          audio.denied();
+        }
+        break;
+      }
+      case 'snared': {
+        rend.effects.ring(e.x, e.y, '#5EE6B0', 8, 70, 0.4, 6);
+        rend.effects.spark(e.x, e.y, '#5EE6B0', 10, 300, 0.4);
+        if (e.core === meId && playing) {
+          this.ui.announce('SNARED!', 'struggle free…', 'pink');
+          audio.snareHit(true);
+          haptic('heavy');
+        } else if (e.by === meId && playing) {
+          this.life.tricks++;
+          rend.floatText(e.x, e.y - 40, 'GOTCHA!', '#5EE6B0', 28);
+          audio.snareHit(false);
+          haptic('success');
+        }
+        break;
+      }
+      case 'disguise': {
+        const c = this.session.cores.get(e.core);
+        if (c) for (let i = 0; i < 12; i++) rend.effects.dot(c.x, c.y, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, 'rgba(255,159,67,0.55)', c.r * 0.5, 0.7);
+        if (e.core === meId) {
+          this.disguised = e.on;
+          if (e.on) this.ui.announce('MIMIC', `you look like ${e.name}`, 'yellow');
+          else this.disguiseOffAt = performance.now();
+        }
+        break;
+      }
       case 'bloodWarn':
         if (playing) {
           audio.bloodToll();

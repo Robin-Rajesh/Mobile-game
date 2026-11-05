@@ -1,4 +1,4 @@
-import { FLAG_RADIANT, FLAG_SHIELD, FLAG_SURGE, q, q100 } from './protocol';
+import { FLAG_RADIANT, FLAG_SHIELD, FLAG_SNARED, FLAG_SURGE, q, q100 } from './protocol';
 import type { CoreTuple, DustTuple, FreeMoonTuple } from './protocol';
 import type { Core, Dust, FreeMoon } from './world';
 
@@ -12,7 +12,7 @@ export function encodeCore(c: Core): CoreTuple {
     c.moons.length,
     q100(c.orbitAngle),
     q(c.orbitR),
-    (c.surging ? FLAG_SURGE : 0) | (c.shield > 0 ? FLAG_SHIELD : 0) | (c.radiant > 0 ? FLAG_RADIANT : 0),
+    (c.surging ? FLAG_SURGE : 0) | (c.shield > 0 ? FLAG_SHIELD : 0) | (c.radiant > 0 ? FLAG_RADIANT : 0) | (c.snared > 0 ? FLAG_SNARED : 0),
     c.spin,
   ];
 }
@@ -29,6 +29,7 @@ export interface DecodedCore {
   surging: boolean;
   shield: boolean;
   radiant: boolean;
+  snared: boolean;
   spin: 1 | -1;
 }
 
@@ -45,6 +46,7 @@ export function decodeCore(t: CoreTuple): DecodedCore {
     surging: (t[8] & FLAG_SURGE) !== 0,
     shield: (t[8] & FLAG_SHIELD) !== 0,
     radiant: (t[8] & FLAG_RADIANT) !== 0,
+    snared: (t[8] & FLAG_SNARED) !== 0,
     spin: t[9],
   };
 }

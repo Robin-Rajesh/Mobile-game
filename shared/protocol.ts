@@ -4,11 +4,12 @@
  */
 import type { GameEvent } from './world';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 // ── client → server
 export type ClientMsg =
-  | { t: 'join'; v: number; name: string; skin: number }
+  | { t: 'join'; v: number; name: string; skin: number; power?: string }
+  | { t: 'pw' }
   | { t: 'in'; a: number; s: 0 | 1 }
   | { t: 'ping'; c: number }
   | { t: 'leave' };
@@ -37,6 +38,13 @@ export interface StarfallWire {
 export type WraithTuple = [number, number, number, number];
 /** [id, x, y] */
 export type SunstoneTuple = [number, number, number];
+/** [id, x, y, ownerId] */
+export type TrapTuple = [number, number, number, number];
+/** [ownerId, x, y] */
+export type WormTuple = [number, number, number];
+/** [ownerId, x, y, radius, secondsLeft] */
+export type BlackoutTuple = [number, number, number, number, number];
+
 export interface BloodWire {
   /** 1 = warning, 2 = dark */
   p: 1 | 2;
@@ -46,7 +54,7 @@ export interface BloodWire {
 
 export type ServerMsg =
   | { t: 'welcome'; v: number; id: number; arena: number; time: number; dust: DustTuple[]; players: PlayerTuple[] }
-  | { t: 's'; k: number; time: number; c: CoreTuple[]; fm: FreeMoonTuple[]; da: DustTuple[]; dr: number[]; e: GameEvent[]; sf: StarfallWire | null; bm: BloodWire | null; wr: WraithTuple[]; ss: SunstoneTuple[] }
+  | { t: 's'; k: number; time: number; c: CoreTuple[]; fm: FreeMoonTuple[]; da: DustTuple[]; dr: number[]; e: GameEvent[]; sf: StarfallWire | null; bm: BloodWire | null; wr: WraithTuple[]; ss: SunstoneTuple[]; tr: TrapTuple[]; wh: WormTuple[]; bo: BlackoutTuple[] }
   | { t: 'you'; id: number }
   | { t: 'pj'; p: PlayerTuple }
   | { t: 'pl'; id: number }
@@ -57,6 +65,7 @@ export type ServerMsg =
 export const FLAG_SURGE = 1;
 export const FLAG_SHIELD = 2;
 export const FLAG_RADIANT = 4;
+export const FLAG_SNARED = 8;
 
 export const q = (n: number): number => Math.round(n);
 export const q100 = (n: number): number => Math.round(n * 100);
@@ -89,7 +98,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
   switch (o.t) {
     case 'join':
       if (typeof o.v !== 'number' || typeof o.skin !== 'number') return null;
-      return { t: 'join', v: o.v, name: typeof o.name === 'string' ? o.name : '', skin: o.skin };
+      return { t: 'join', v: o.v, name: typeof o.name === 'string' ? o.name : '', skin: o.skin, power: typeof o.power === 'string' ? o.power : undefined };
+    case 'pw':
+      return { t: 'pw' };
     case 'in':
       if (typeof o.a !== 'number' || !Number.isFinite(o.a)) return null;
       return { t: 'in', a: o.a, s: o.s ? 1 : 0 };

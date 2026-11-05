@@ -227,6 +227,55 @@ class AudioEngine {
     }
   }
 
+  // ───────────────────────────── powers
+
+  power(kind: string): void {
+    switch (kind) {
+      case 'blink':
+        this.tone(300, 0.35, { type: 'sine', gain: 0.12, slideTo: 1200 });
+        this.tone(450, 0.35, { type: 'triangle', gain: 0.06, slideTo: 1800, delay: 0.03 });
+        break;
+      case 'bubble':
+        this.tone(600, 0.25, { type: 'sine', gain: 0.12, slideTo: 1400 });
+        this.tone(1400, 0.4, { type: 'sine', gain: 0.05, delay: 0.1 });
+        break;
+      case 'decoy':
+        this.noise(0.3, { gain: 0.12, freq: 1200, sweepTo: 400, q: 2 });
+        this.tone(520, 0.3, { type: 'triangle', gain: 0.08, slideTo: 260 });
+        break;
+      case 'snare':
+        this.tone(180, 0.15, { type: 'square', gain: 0.06 });
+        this.tone(140, 0.2, { type: 'square', gain: 0.05, delay: 0.06 });
+        break;
+      case 'mimic':
+        for (let i = 0; i < 5; i++) this.tone(400 + i * 140, 0.12, { type: 'triangle', gain: 0.05, delay: i * 0.04 });
+        break;
+      case 'blackout':
+        this.tone(220, 0.8, { type: 'sawtooth', gain: 0.08, slideTo: 40 });
+        this.noise(0.6, { gain: 0.15, freq: 3000, sweepTo: 100, type: 'lowpass' });
+        break;
+    }
+  }
+
+  warp(near: number): void {
+    if (near < 0.05) return;
+    this.tone(1600, 0.3, { type: 'sine', gain: 0.1 * near, slideTo: 200 });
+    this.noise(0.25, { gain: 0.12 * near, freq: 5000, sweepTo: 500, q: 1 });
+  }
+
+  denied(): void {
+    this.tone(160, 0.12, { type: 'square', gain: 0.05 });
+  }
+
+  fooled(): void {
+    [659, 523, 784, 1046].forEach((f, i) => this.tone(f, 0.18, { type: 'triangle', gain: 0.08, delay: i * 0.07 }));
+  }
+
+  snareHit(mine: boolean): void {
+    this.tone(mine ? 90 : 300, 0.4, { type: 'sawtooth', gain: 0.1, slideTo: mine ? 50 : 150 });
+    this.noise(0.2, { gain: 0.15, freq: 900, q: 3 });
+  }
+
   // ───────────────────────────── Blood Moon
 
   /** Three slow church-bell tolls. */

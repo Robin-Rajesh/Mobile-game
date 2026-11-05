@@ -196,7 +196,7 @@ describe('Full arena soak', () => {
     expect(kills).toBeGreaterThan(5);
     expect(starfalls).toBeGreaterThan(1);
     // population is maintained by respawns
-    expect(w.cores.size + w.pendingBotRespawns).toBe(18);
+    expect(w.ranking().length + w.pendingBotRespawns).toBe(18);
   });
 });
 

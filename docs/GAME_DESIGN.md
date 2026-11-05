@@ -23,6 +23,21 @@ Moonbite is a real-time, drop-in/drop-out arena game in the same family as slith
 | **Starfall** | Every ~48s a zone gets marked on everyone's map, a countdown runs, then gold dust rains down. It pulls everyone into one fight. |
 | **Spawn shield** | 3 seconds as a ghost: you can't be bitten and your moons can't bite. |
 
+## ✧ Powers (pick one before each round)
+
+Powers are role-style abilities inspired by the social-deduction genre. They exist to make players creative: bait, hide, trick, ambush. You get one power per round, chosen in the main menu, plus a cooldown button in the HUD (on desktop, **E** or right-click). Bots get random powers and use them in context.
+
+| Power | Cooldown | Unlock | Effect | Creative plays |
+|---|---|---|---|---|
+| 🌀 **Wormhole** | 14s | Lv 1 | First press opens a portal where you stand. Press again within 10s to warp back to it. Everyone can see the portal. | Escape hatch, bait-and-vanish, flank warps, fake retreats |
+| 🫧 **Bubble** | 18s | Lv 1 | 2.8s of immunity to bites and wraiths. Your moons can't bite while it's up. | Dive through a brawl, survive a Blood Moon pinch |
+| 👥 **Phantom** | 16s | Lv 2 | Spawns a decoy with your name, skin and moons that keeps running. It's harmless and pops on any touch. Your own decoys show ghosted to you only. | Split a chase, make hunters and wraiths commit to the wrong target |
+| 🕸️ **Snare** | 8s | Lv 4 | Drops a trap behind you (2 max). It's near-invisible to others: just a shimmer when they're right on top of it. A victim is slowed to 30% for 2.2s with frozen moons. | Lay traps on the route to a Starfall, snare a chaser, then turn and bite |
+| 🎭 **Mimic** | 22s | Lv 6 | Take the nearest player's skin and name for 8s. Bots treat you as harmless. Biting someone breaks the disguise. | Walk right up to a target, impersonate the leader |
+| 🌑 **Blackout** | 24s | Lv 9 | For 6s, everyone within 950u of you is nearly blind. You see everything, plus the zone outline. | Hunt in the dark, or cover an escape |
+
+Clever plays (a Phantom fooling someone, a Snare catching someone, a Mimic bite) count as **tricks**. Tricks earn XP and feed a daily mission ("Pull off N power tricks").
+
 ## 🩸 The Blood Moon (horror event)
 
 Every 2.5–3 minutes the game turns into something else.

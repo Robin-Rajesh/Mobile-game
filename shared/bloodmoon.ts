@@ -276,8 +276,8 @@ export class BloodMoon {
     for (const c of w.cores.values()) {
       if (!c.alive) continue;
 
-      // pick up sunstones
-      for (let i = this.sunstones.length - 1; i >= 0; i--) {
+      // pick up sunstones (phantoms can't)
+      for (let i = this.sunstones.length - 1; !c.decoyOf && i >= 0; i--) {
         const s = this.sunstones[i];
         const rr = c.r + SUNSTONE_RADIUS + 6;
         if ((s.x - c.x) ** 2 + (s.y - c.y) ** 2 < rr * rr) {

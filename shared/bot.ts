@@ -53,6 +53,37 @@ export class BotBrain implements BotController {
     return this.mode;
   }
 
+  private usePower(world: World, me: Core, danger: number, fleeAt: number, target: Core | null): void {
+    if (me.powerCd > 0 && !(me.power === 'blink' && me.worm)) return;
+    const roll = rng.next();
+    const go = () => world.powers.use(me);
+    const td = target ? Math.hypot(target.x - me.x, target.y - me.y) : Infinity;
+    switch (me.power) {
+      case 'bubble':
+        if (danger > fleeAt * 1.4 && roll < 0.35 + this.p.skill * 0.4) go();
+        break;
+      case 'decoy':
+        if (this.mode === 'flee' && danger > fleeAt && roll < 0.5) go();
+        else if (this.mode === 'hunt' && td < 500 && roll < 0.08) go();
+        break;
+      case 'blink':
+        if (!me.worm && danger === 0 && this.mode === 'farm' && roll < 0.03) go();
+        else if (me.worm && danger > fleeAt * 1.1 && Math.hypot(me.worm.x - me.x, me.worm.y - me.y) > 450) go();
+        break;
+      case 'snare':
+        if (this.mode === 'flee' && roll < 0.6) go();
+        else if (this.mode === 'farm' && roll < 0.02) go();
+        break;
+      case 'mimic':
+        if (this.mode === 'hunt' && td < 750 && roll < 0.45) go();
+        break;
+      case 'blackout':
+        if (this.mode === 'hunt' && td < 650 && roll < 0.4) go();
+        else if (this.mode === 'flee' && danger > fleeAt * 1.5 && roll < 0.3) go();
+        break;
+    }
+  }
+
   think(world: World, me: Core, dt: number): void {
     this.surgeHold -= dt;
     this.modeLock -= dt;
@@ -63,8 +94,9 @@ export class BotBrain implements BotController {
       return;
     }
     // slower brains react later
-    this.thinkIn = 0.08 + (1 - this.p.skill) * 0.32 + rng.range(0, 0.08);
-    this.aimNoise = (rng.next() - 0.5) * (1 - this.p.skill) * 0.9;
+    const blind = me.blind > 0;
+    this.thinkIn = 0.08 + (1 - this.p.skill) * 0.32 + rng.range(0, 0.08) + (blind ? 0.25 : 0);
+    this.aimNoise = (rng.next() - 0.5) * ((1 - this.p.skill) * 0.9 + (blind ? 2.2 : 0));
 
     const R = world.arenaRadius;
     let gx = 0;
@@ -84,7 +116,9 @@ export class BotBrain implements BotController {
       const dx = o.x - me.x;
       const dy = o.y - me.y;
       const d = Math.hypot(dx, dy) || 1;
-      if (d > 1300) continue;
+      if (d > (blind ? 260 : 1300)) continue;
+      // a Mimic looks like a friend
+      if (o.disguise > 0) continue;
 
       const theirReach = o.orbitR * (o.canSurge ? (o.surging ? 1 : SURGE_ORBIT_MULT) : 1) + o.moonR + me.r;
       const margin = 60 + this.p.caution * 220;
@@ -237,6 +271,9 @@ export class BotBrain implements BotController {
       }
     }
 
+    // ── powers, used the way a player would
+    this.usePower(world, me, danger, fleeThreshold, target ?? null);
+
     // ── Blood Moon overrides: hunt wraiths while radiant, otherwise race for sunstones
     if (bm.dark) {
       if (me.radiant > 0) {
@@ -294,6 +331,10 @@ export class BotBrain implements BotController {
     me.input.angle = Math.atan2(gy, gx) + this.aimNoise;
     me.input.surge = surge || (this.surgeHold > 0 && me.input.surge);
   }
+}
+
+export function botPowerChance(): number {
+  return rng.next();
 }
 
 const NAMES = [

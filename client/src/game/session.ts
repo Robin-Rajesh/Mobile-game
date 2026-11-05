@@ -1,3 +1,4 @@
+import type { PowerId } from '../../../shared/powers';
 import type { GameEvent } from '../../../shared/world';
 
 /** What the renderer needs to know about a core — satisfied by both sim and network cores. */
@@ -21,6 +22,8 @@ export interface ViewCore {
   shield: number;
   /** > 0 while Radiant (sunstone power) */
   radiant: number;
+  /** > 0 while caught in a snare */
+  snared: number;
   spin: 1 | -1;
   readonly r: number;
   readonly moonR: number;
@@ -57,6 +60,26 @@ export interface ViewSunstone {
   id: number;
   x: number;
   y: number;
+}
+
+export interface ViewTrap {
+  id: number;
+  x: number;
+  y: number;
+  owner: number;
+}
+
+export interface ViewWorm {
+  owner: number;
+  x: number;
+  y: number;
+}
+
+export interface ViewBlackout {
+  owner: number;
+  x: number;
+  y: number;
+  r: number;
 }
 
 export type BloodPhase = 'calm' | 'warn' | 'dark';
@@ -97,13 +120,17 @@ export interface Session {
   readonly wraiths: readonly ViewWraith[];
   readonly sunstones: readonly ViewSunstone[];
   readonly blood: BloodState;
+  readonly traps: readonly ViewTrap[];
+  readonly worms: readonly ViewWorm[];
+  readonly blackouts: readonly ViewBlackout[];
+  usePower(): void;
   /** Advance by real time. timeScale < 1 is used for hit-stop (offline only). */
   update(dt: number, input: PlayerInput | null, timeScale: number): void;
   drain(out: FrameOutput): void;
   board(): BoardEntry[];
   rankOf(id: number): number;
   population(): number;
-  spawn(name: string, skin: number): void;
+  spawn(name: string, skin: number, power: PowerId): void;
   leave(): void;
   dispose(): void;
   /** Round-trip time in ms (online only) */

@@ -1320,3 +1320,198 @@ body {
     display: none;
   }
 }
+
+/* ───────────────────────────────────── power button */
+.power-btn {
+  --pc: #7c5cff;
+  position: absolute;
+  right: calc(36px + var(--safe-r));
+  bottom: calc(146px + var(--safe-b));
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--pc);
+  border: 4px solid var(--ink);
+  box-shadow: 0 6px 0 var(--ink), inset 0 -5px 0 rgba(0, 0, 0, 0.25), inset 0 3px 0 rgba(255, 255, 255, 0.35);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  transition: transform 0.06s, filter 0.2s;
+}
+.power-btn.left {
+  right: auto;
+  left: calc(36px + var(--safe-l));
+}
+.power-btn.desk {
+  right: calc(24px + var(--safe-r));
+  bottom: calc(24px + var(--safe-b));
+  width: 64px;
+  height: 64px;
+}
+.power-btn.desk::after {
+  content: 'E';
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  font-family: var(--display);
+  font-size: 13px;
+  color: var(--cream);
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+.power-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  mix-blend-mode: multiply;
+}
+.power-icon {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  color: var(--cream);
+  filter: drop-shadow(0 2px 0 var(--ink));
+}
+.power-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.power-btn.ready {
+  animation: powerReady 1.6s ease-in-out infinite;
+}
+.power-btn.armed {
+  animation: powerArmed 0.5s ease-in-out infinite;
+  box-shadow: 0 6px 0 var(--ink), 0 0 0 6px rgba(255, 255, 255, 0.35);
+}
+.power-btn.pressed {
+  transform: translateY(4px) scale(0.94);
+}
+@keyframes powerReady {
+  0%, 100% { box-shadow: 0 6px 0 var(--ink), 0 0 0 0 rgba(255, 255, 255, 0); }
+  50% { box-shadow: 0 6px 0 var(--ink), 0 0 0 6px rgba(255, 255, 255, 0.25); }
+}
+@keyframes powerArmed {
+  50% { transform: scale(1.08); }
+}
+#ui.cine .power-btn {
+  opacity: 0;
+}
+
+/* power picker */
+.power-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+.power-pick .pi {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2.5px solid var(--ink);
+  color: var(--cream);
+}
+.power-pick .pi svg {
+  width: 16px;
+  height: 16px;
+}
+.power-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.power-card {
+  position: relative;
+  background: var(--panel-2);
+  border: 3px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 10px 10px;
+  text-align: center;
+  cursor: pointer;
+}
+.power-card.sel {
+  border-color: var(--yellow);
+  background: rgba(255, 216, 77, 0.1);
+}
+.power-card.locked {
+  opacity: 0.5;
+  cursor: default;
+}
+.power-card .pc-ic {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 6px;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  display: grid;
+  place-items: center;
+  color: var(--cream);
+  box-shadow: 0 4px 0 var(--ink);
+}
+.power-card .pc-ic svg {
+  width: 30px;
+  height: 30px;
+}
+.power-card b {
+  display: block;
+  font-family: var(--display);
+  font-weight: normal;
+  font-size: 18px;
+}
+.power-card span {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.25;
+  margin-top: 2px;
+}
+.power-card .lock {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-family: var(--display);
+  font-size: 12px;
+  color: var(--pink);
+}
+.power-detail {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.35;
+  background: var(--ink-deep);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.power-detail b {
+  font-family: var(--display);
+  font-weight: normal;
+  color: var(--yellow);
+}
+@media (max-width: 560px) {
+  .hint {
+    bottom: calc(236px + var(--safe-b));
+    max-width: min(74vw, 340px);
+    font-size: 14.5px;
+  }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .hero {
+    width: 180px;
+    height: 112px;
+  }
+  .menu-body {
+    gap: 6px;
+  }
+  .tagline {
+    display: none;
+  }
+  .power-btn {
+    bottom: calc(40px + var(--safe-b));
+    right: calc(140px + var(--safe-r));
+  }
+  .power-btn.left {
+    left: calc(140px + var(--safe-l));
+  }
+}

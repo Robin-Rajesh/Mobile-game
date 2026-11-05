@@ -3,6 +3,8 @@ import { LOCAL_TICK_RATE } from '../../../shared/constants';
 import { Rng } from '../../../shared/math';
 import { BOT_SKIN_POOL } from '../../../shared/skins';
 import { World } from '../../../shared/world';
+import type { PowerId } from '../../../shared/powers';
+import type { ViewBlackout, ViewTrap, ViewWorm } from './session';
 import type { BloodState, BoardEntry, FrameOutput, PlayerInput, Session, ViewCore, ViewDust, ViewFreeMoon, ViewSunstone, ViewWraith } from './session';
 
 const STEP = 1 / LOCAL_TICK_RATE;
@@ -66,6 +68,23 @@ export class LocalSession implements Session {
     return { phase: bm.phase, in: bm.remaining };
   }
 
+  get traps(): readonly ViewTrap[] {
+    return this.world.powers.traps;
+  }
+  get worms(): readonly ViewWorm[] {
+    const out: ViewWorm[] = [];
+    for (const c of this.world.cores.values()) if (c.worm) out.push({ owner: c.id, x: c.worm.x, y: c.worm.y });
+    return out;
+  }
+  get blackouts(): readonly ViewBlackout[] {
+    return this.world.powers.blackouts;
+  }
+
+  usePower(): void {
+    const me = this.meId !== null ? this.world.cores.get(this.meId) : undefined;
+    if (me) this.world.powers.use(me);
+  }
+
   /** Debug / showcase: start the Blood Moon soon. */
   triggerBloodMoon(inSecs = 6): void {
     this.world.bloodMoon.trigger(inSecs);
@@ -108,11 +127,11 @@ export class LocalSession implements Session {
   }
 
   population(): number {
-    return this.world.cores.size;
+    return this.world.ranking().length;
   }
 
-  spawn(name: string, skin: number): void {
-    const core = this.world.addCore(name, skin, false);
+  spawn(name: string, skin: number, power: PowerId): void {
+    const core = this.world.addCore(name, skin, false, undefined, power);
     this.meId = core.id;
     // bots shouldn't feel like they're queueing to eat the newcomer
     core.shield = 3.5;

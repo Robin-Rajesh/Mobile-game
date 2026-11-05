@@ -6,6 +6,7 @@ import { Rng, clamp } from '../shared/math';
 import { PROTOCOL_VERSION, isNameAllowed, sanitizeName } from '../shared/protocol';
 import type { BoardTuple, ClientMsg, PlayerTuple, ServerMsg } from '../shared/protocol';
 import { BOT_SKIN_POOL, isValidSkin } from '../shared/skins';
+import { isPowerId } from '../shared/powers';
 import { World } from '../shared/world';
 import type { Core } from '../shared/world';
 
@@ -98,7 +99,8 @@ export class Room {
         if (!name || !isNameAllowed(name)) name = 'moonling';
         client.name = name;
         client.skin = isValidSkin(msg.skin) ? msg.skin : 0;
-        const core = this.world.addCore(client.name, client.skin, false);
+        // NOTE: power unlocks are client-side progression; a hardened deployment should verify them server-side.
+        const core = this.world.addCore(client.name, client.skin, false, undefined, isPowerId(msg.power) ? msg.power : 'bubble');
         client.coreId = core.id;
         if (!client.joined) {
           client.joined = true;
@@ -115,6 +117,11 @@ export class Room {
           core.input.angle = msg.a;
           core.input.surge = msg.s === 1;
         }
+        break;
+      }
+      case 'pw': {
+        const core = client.coreId !== null ? this.world.cores.get(client.coreId) : undefined;
+        if (core) this.world.powers.use(core);
         break;
       }
       case 'ping':
@@ -200,6 +207,9 @@ export class Room {
       bm: w.bloodMoon.phase === 'calm' ? null : { p: w.bloodMoon.phase === 'warn' ? 1 : 2, in: Math.round(w.bloodMoon.remaining * 100) / 100 },
       wr: w.bloodMoon.wraiths.map((x) => [x.id, Math.round(x.x), Math.round(x.y), (x.scared ? 1 : 0) | (x.stagger > 0 ? 2 : 0)]),
       ss: w.bloodMoon.sunstones.map((x) => [x.id, Math.round(x.x), Math.round(x.y)]),
+      tr: w.powers.traps.map((x) => [x.id, Math.round(x.x), Math.round(x.y), x.owner]),
+      wh: [...w.cores.values()].filter((c) => c.worm).map((c) => [c.id, Math.round(c.worm!.x), Math.round(c.worm!.y)]),
+      bo: w.powers.blackouts.map((b) => [b.owner, Math.round(b.x), Math.round(b.y), b.r, Math.round((b.until - w.time) * 10) / 10]),
       sf: sf ? { x: Math.round(sf.x), y: Math.round(sf.y), r: sf.r, in: Math.round((sf.at - w.time) * 100) / 100 } : null,
     };
 

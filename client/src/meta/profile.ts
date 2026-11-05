@@ -1,11 +1,13 @@
 import { Rng, hashString } from '../../../shared/math';
+import { POWERS, isPowerId } from '../../../shared/powers';
+import type { PowerId } from '../../../shared/powers';
 import { SKINS } from '../../../shared/skins';
 import type { Skin } from '../../../shared/skins';
 import { storage } from './storage';
 
 const KEY = 'moonbite.profile.v1';
 
-export type MissionKind = 'bites' | 'mass' | 'survive' | 'clash' | 'dust' | 'games' | 'top' | 'steal' | 'banish' | 'dawn';
+export type MissionKind = 'bites' | 'mass' | 'survive' | 'clash' | 'dust' | 'games' | 'top' | 'steal' | 'banish' | 'dawn' | 'trick';
 
 export interface Mission {
   kind: MissionKind;
@@ -26,6 +28,7 @@ export interface Settings {
 export interface Profile {
   name: string;
   skin: number;
+  power: PowerId;
   level: number;
   xp: number;
   coins: number;
@@ -51,6 +54,8 @@ export interface MatchResult {
   dust: number;
   banished: number;
   dawns: number;
+  /** clever power plays: phantom fooled someone, snare caught someone, mimic bite */
+  tricks: number;
 }
 
 export interface MatchRewards {
@@ -76,6 +81,7 @@ function defaultProfile(): Profile {
   return {
     name: '',
     skin: 0,
+    power: 'bubble',
     level: 1,
     xp: 0,
     coins: 0,
@@ -103,6 +109,7 @@ const MISSION_POOL: { kind: MissionKind; targets: number[]; reward: number }[] =
   { kind: 'steal', targets: [3, 6, 10], reward: 60 },
   { kind: 'banish', targets: [1, 3, 6], reward: 90 },
   { kind: 'dawn', targets: [1, 2], reward: 80 },
+  { kind: 'trick', targets: [2, 4, 8], reward: 70 },
 ];
 
 export function missionText(m: Mission): string {
@@ -125,6 +132,8 @@ export function missionText(m: Mission): string {
       return `Steal ${m.target} loose moons`;
     case 'banish':
       return `Banish ${m.target} wraith${m.target > 1 ? 's' : ''}`;
+    case 'trick':
+      return `Pull off ${m.target} power tricks`;
     case 'dawn':
       return m.target > 1 ? `Survive ${m.target} Blood Moons` : 'Survive a Blood Moon';
   }
@@ -141,8 +150,14 @@ export class ProfileStore {
     const loaded = storage.get<Partial<Profile>>(KEY, {});
     const d = defaultProfile();
     this.data = { ...d, ...loaded, settings: { ...d.settings, ...(loaded.settings ?? {}) }, best: { ...d.best, ...(loaded.best ?? {}) }, totals: { ...d.totals, ...(loaded.totals ?? {}) } };
+    if (!isPowerId(this.data.power)) this.data.power = 'bubble';
     this.refreshDaily();
     this.grantLevelSkins();
+  }
+
+  isPowerUnlocked(id: PowerId): boolean {
+    const p = POWERS.find((x) => x.id === id);
+    return !!p && this.data.level >= p.unlockLevel;
   }
 
   onChange(fn: () => void): () => void {
@@ -212,7 +227,7 @@ export class ProfileStore {
     const levelBefore = d.level;
     const levelProgressBefore = d.xp / xpToNext(d.level);
 
-    const xp = Math.round(r.peakMass / 8 + r.kills * 30 + r.aliveSecs / 3 + (r.bestRank <= 3 ? 40 : 0) + r.banished * 25 + r.dawns * 40 + 10);
+    const xp = Math.round(r.peakMass / 8 + r.kills * 30 + r.aliveSecs / 3 + (r.bestRank <= 3 ? 40 : 0) + r.banished * 25 + r.dawns * 40 + r.tricks * 15 + 10);
     let coins = Math.round(r.peakMass / 30 + r.kills * 8 + (r.bestRank === 1 ? 25 : 0) + 3);
 
     const newBest = r.peakMass > d.best.mass && d.totals.games > 0;
@@ -238,6 +253,7 @@ export class ProfileStore {
         case 'steal': value = r.captures; break;
         case 'banish': value = r.banished; break;
         case 'dawn': value = r.dawns; break;
+        case 'trick': value = r.tricks; break;
       }
       m.progress = PER_ROUND.has(m.kind) ? Math.max(m.progress, Math.min(m.target, Math.round(value))) : Math.min(m.target, m.progress + Math.round(value));
       if (m.progress >= m.target) {

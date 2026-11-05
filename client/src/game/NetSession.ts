@@ -6,6 +6,8 @@ import { PROTOCOL_VERSION } from '../../../shared/protocol';
 import type { ClientMsg, DustTuple, ServerMsg } from '../../../shared/protocol';
 import { insertMoonOffset, spreadMoonOffsets } from '../../../shared/world';
 import type { GameEvent } from '../../../shared/world';
+import type { PowerId } from '../../../shared/powers';
+import type { ViewBlackout, ViewTrap, ViewWorm } from './session';
 import type { BloodState, BoardEntry, FrameOutput, PlayerInput, Session, ViewCore, ViewDust, ViewFreeMoon, ViewSunstone, ViewWraith } from './session';
 
 /** Render remote entities this far in the past so we always have two snapshots to blend. */
@@ -24,6 +26,7 @@ class NetCore implements ViewCore {
   surging = false;
   shield = 0;
   radiant = 0;
+  snared = 0;
   spin: 1 | -1 = 1;
   /** Count the server says we should have; offsets ease toward it. */
   moonTarget = 0;
@@ -49,6 +52,9 @@ interface Snapshot {
   wr: Map<number, [number, number, number, number]>;
   ss: ViewSunstone[];
   bm: { p: 1 | 2; in: number } | null;
+  tr: ViewTrap[];
+  wh: ViewWorm[];
+  bo: ViewBlackout[];
 }
 
 interface Pending {
@@ -69,6 +75,9 @@ export class NetSession implements Session {
   wraiths: ViewWraith[] = [];
   sunstones: ViewSunstone[] = [];
   blood: BloodState = { phase: 'calm', in: 999 };
+  traps: ViewTrap[] = [];
+  worms: ViewWorm[] = [];
+  blackouts: ViewBlackout[] = [];
   private wraithMap = new Map<number, ViewWraith>();
   rtt = 80;
   lost = false;
@@ -96,7 +105,7 @@ export class NetSession implements Session {
   }
 
   /** Connect and join. Resolves null on failure/timeout so the caller can fall back offline. */
-  static connect(url: string, name: string, skin: number, timeoutMs = 3500): Promise<NetSession | null> {
+  static connect(url: string, name: string, skin: number, power: PowerId, timeoutMs = 3500): Promise<NetSession | null> {
     return new Promise((resolve) => {
       let ws: WebSocket;
       try {
@@ -116,7 +125,7 @@ export class NetSession implements Session {
         if (!ok) s.dispose();
         resolve(ok ? s : null);
       };
-      ws.onopen = () => s.send({ t: 'join', v: PROTOCOL_VERSION, name, skin });
+      ws.onopen = () => s.send({ t: 'join', v: PROTOCOL_VERSION, name, skin, power });
       ws.onerror = () => s.onReady?.(false);
     });
   }
@@ -225,6 +234,9 @@ export class NetSession implements Session {
           wr,
           ss: (m.ss ?? []).map(([id, x, y]) => ({ id, x, y })),
           bm: m.bm ?? null,
+          tr: (m.tr ?? []).map(([id, x, y, owner]) => ({ id, x, y, owner })),
+          wh: (m.wh ?? []).map(([owner, x, y]) => ({ owner, x, y })),
+          bo: (m.bo ?? []).map(([owner, x, y, r]) => ({ owner, x, y, r })),
         });
         if (this.snaps.length > 30) this.snaps.shift();
         this.pending.push({ time: m.time, events: m.e, added: m.da, removed: m.dr });
@@ -269,6 +281,7 @@ export class NetSession implements Session {
       c.surging = db.surging;
       c.shield = db.shield ? 1 : 0;
       c.radiant = db.radiant ? 1 : 0;
+      c.snared = db.snared ? 1 : 0;
       c.spin = db.spin;
       c.moonTarget = db.moons;
     }
@@ -280,6 +293,11 @@ export class NetSession implements Session {
       spreadMoonOffsets(c.moons, dt);
     }
 
+    // drop cores missing from two consecutive snapshots (silently removed, e.g. phantoms)
+    for (const id of this.cores.keys()) if (!b.cores.has(id) && !a.cores.has(id)) this.cores.delete(id);
+    this.traps = b.tr;
+    this.worms = b.wh;
+    this.blackouts = b.bo;
     this.freeMoons = b.fm;
     this.sunstones = b.ss;
     this.blood = b.bm ? { phase: b.bm.p === 1 ? 'warn' : 'dark', in: b.bm.in - (renderTime - b.time) } : { phase: 'calm', in: 999 };
@@ -392,6 +410,22 @@ export class NetSession implements Session {
             c.moons.splice(best, 1);
             c.moonTarget = Math.max(0, c.moonTarget - 1);
           }
+        } else if (e.t === 'decoyPop') {
+          this.cores.delete(e.id);
+          this.players.delete(e.id);
+        } else if (e.t === 'disguise') {
+          const pl = this.players.get(e.core);
+          if (pl) {
+            pl.name = e.name;
+            pl.skin = e.skin;
+          }
+          const c = this.cores.get(e.core);
+          if (c) {
+            c.name = e.name;
+            c.skin = e.skin;
+          }
+        } else if (e.t === 'warp') {
+          if (e.core === this.meId) this.pred.init = false;
         } else if (e.t === 'ward') {
           const c = this.cores.get(e.core);
           if (c && c.moons.length) {
@@ -435,10 +469,14 @@ export class NetSession implements Session {
     return this.pop || this.cores.size;
   }
 
-  spawn(name: string, skin: number): void {
+  usePower(): void {
+    this.send({ t: 'pw' });
+  }
+
+  spawn(name: string, skin: number, power: PowerId): void {
     this.pred.init = false;
     this.meId = null; // assigned by the server's 'you' reply
-    this.send({ t: 'join', v: PROTOCOL_VERSION, name, skin });
+    this.send({ t: 'join', v: PROTOCOL_VERSION, name, skin, power });
   }
 
   leave(): void {

@@ -30,6 +30,11 @@ export class Input {
   private stickKnob: HTMLDivElement;
   readonly surgeBtn: HTMLDivElement;
   private surgeFill: HTMLDivElement;
+  readonly powerBtn: HTMLDivElement;
+  private powerRing: HTMLDivElement;
+  private powerIcon: HTMLDivElement;
+  /** Fired on every power press (touch button, E key, right click). */
+  onPower: (() => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement, layer: HTMLElement) {
     this.stickBase = document.createElement('div');
@@ -41,7 +46,12 @@ export class Input {
     this.surgeBtn.className = 'surge-btn';
     this.surgeBtn.innerHTML = '<div class="surge-fill"></div><span>SURGE</span>';
     this.surgeFill = this.surgeBtn.querySelector('.surge-fill') as HTMLDivElement;
-    layer.append(this.stickBase, this.surgeBtn);
+    this.powerBtn = document.createElement('div');
+    this.powerBtn.className = 'power-btn';
+    this.powerBtn.innerHTML = '<div class="power-ring"></div><div class="power-icon"></div>';
+    this.powerRing = this.powerBtn.querySelector('.power-ring') as HTMLDivElement;
+    this.powerIcon = this.powerBtn.querySelector('.power-icon') as HTMLDivElement;
+    layer.append(this.stickBase, this.surgeBtn, this.powerBtn);
     this.setVisible(false);
 
     canvas.addEventListener('pointerdown', this.onDown);
@@ -56,6 +66,9 @@ export class Input {
 
   setVisible(v: boolean): void {
     this.surgeBtn.style.display = v && IS_TOUCH ? '' : 'none';
+    this.powerBtn.style.display = v ? '' : 'none';
+    this.powerBtn.classList.toggle('left', this.leftHanded);
+    this.powerBtn.classList.toggle('desk', !IS_TOUCH);
     if (!v) this.stickBase.style.display = 'none';
     this.surgeBtn.classList.toggle('left', this.leftHanded);
   }
@@ -75,6 +88,25 @@ export class Input {
     this.surgeFill.style.transform = `scaleY(${Math.max(0, Math.min(1, fraction))})`;
   }
 
+  setPowerIcon(svg: string, color: string): void {
+    this.powerIcon.innerHTML = svg;
+    this.powerBtn.style.setProperty('--pc', color);
+  }
+
+  /** cooldown 0..1 remaining, armed = second press available */
+  setPowerState(cooldown: number, armed: boolean): void {
+    const pct = Math.round((1 - cooldown) * 100);
+    this.powerRing.style.background = cooldown > 0 ? `conic-gradient(rgba(255,255,255,0.85) ${pct}%, rgba(0,0,0,0.55) ${pct}%)` : '';
+    this.powerBtn.classList.toggle('ready', cooldown <= 0);
+    this.powerBtn.classList.toggle('armed', armed);
+  }
+
+  private firePower(): void {
+    this.powerBtn.classList.add('pressed');
+    setTimeout(() => this.powerBtn.classList.remove('pressed'), 120);
+    this.onPower?.();
+  }
+
   reset(): void {
     this.stickId = null;
     this.surgeId = null;
@@ -92,6 +124,20 @@ export class Input {
 
   private onDown = (e: PointerEvent): void => {
     if (!this.enabled) return;
+    if (e.pointerType === 'mouse' && e.button === 2) {
+      e.preventDefault();
+      this.firePower();
+      return;
+    }
+    if (e.pointerType !== 'mouse') {
+      const r = this.powerBtn.getBoundingClientRect();
+      const pad = 14;
+      if (e.clientX > r.left - pad && e.clientX < r.right + pad && e.clientY > r.top - pad && e.clientY < r.bottom + pad && this.powerBtn.style.display !== 'none') {
+        e.preventDefault();
+        this.firePower();
+        return;
+      }
+    }
     if (e.pointerType === 'mouse') {
       this.mouseActive = true;
       this.mouseDown = true;
@@ -166,6 +212,10 @@ export class Input {
     if (!this.enabled) return;
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     const k = e.key.toLowerCase();
+    if ((k === 'e' || k === 'q') && e.type === 'keydown' && !e.repeat) {
+      this.firePower();
+      return;
+    }
     const tracked = ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'];
     if (!tracked.includes(k)) return;
     e.preventDefault();

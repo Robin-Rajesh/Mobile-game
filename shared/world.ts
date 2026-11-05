@@ -36,6 +36,8 @@ import {
   turnRate,
 } from './constants';
 import { BloodMoon } from './bloodmoon';
+import { POWER_IDS, Powers, decoyWander } from './powers';
+import type { PowerId } from './powers';
 import { Rng, TAU, angleDiff, damp } from './math';
 
 export interface Dust {
@@ -84,7 +86,13 @@ export type GameEvent =
   | { t: 'wraithSpawn'; x: number; y: number; target: number }
   | { t: 'ward'; core: number; x: number; y: number }
   | { t: 'banish'; x: number; y: number; by: number; name: string }
-  | { t: 'sunstone'; core: number; x: number; y: number };
+  | { t: 'sunstone'; core: number; x: number; y: number }
+  | { t: 'power'; core: number; kind: PowerId; phase: 'use' | 'armed' | 'expire'; cd: number }
+  | { t: 'warp'; core: number; fx: number; fy: number; x: number; y: number }
+  | { t: 'decoy'; core: number; decoy: number }
+  | { t: 'decoyPop'; id: number; owner: number; x: number; y: number; by: number | null; byName: string }
+  | { t: 'snared'; core: number; x: number; y: number; by: number }
+  | { t: 'disguise'; core: number; name: string; skin: number; on: boolean };
 
 export class Core {
   x = 0;
@@ -101,6 +109,19 @@ export class Core {
   surging = false;
   /** Seconds of Blood Moon radiance left (sunstone power-up). */
   radiant = 0;
+
+  // ── powers
+  power: PowerId = 'bubble';
+  powerCd = 0;
+  worm: { x: number; y: number; ttl: number } | null = null;
+  disguise = 0;
+  realName = '';
+  realSkin = 0;
+  snared = 0;
+  blind = 0;
+  /** If non-zero this core is a Phantom decoy belonging to that core id. */
+  decoyOf = 0;
+  decoyLife = 0;
   shield = SPAWN_SHIELD_SECS;
   alive = true;
   input: CoreInput = { angle: 0, surge: false };
@@ -229,6 +250,7 @@ export class World {
   starfall: Starfall | null = null;
   nextStarfall: number;
   readonly bloodMoon: BloodMoon;
+  readonly powers: Powers;
 
   /** Drained by the consumer (renderer / network layer) each frame. */
   events: GameEvent[] = [];
@@ -249,6 +271,7 @@ export class World {
     this.dustTarget = opts.dustTarget ?? DUST_TARGET;
     this.nextStarfall = STARFALL_FIRST_DELAY;
     this.bloodMoon = new BloodMoon(this);
+    this.powers = new Powers(this);
     for (let i = 0; i < this.dustTarget; i++) this.spawnNaturalDust();
     // initial dust shouldn't be reported as "added" — consumers take a full snapshot on join.
     this.addedDust.length = 0;
@@ -260,8 +283,10 @@ export class World {
     return this.nextId++;
   }
 
-  addCore(name: string, skin: number, isBot: boolean, bot?: BotController): Core {
+  addCore(name: string, skin: number, isBot: boolean, bot?: BotController, power?: PowerId): Core {
     const core = new Core(this.allocId(), name, skin, isBot);
+    if (power) core.power = power;
+    else if (isBot) core.power = this.rng.pick(POWER_IDS);
     // humans start in the inner arena so a fresh spawn never begins next to the rim
     const p = this.findSpawnPoint(isBot ? 0.82 : 0.6);
     core.x = p.x;
@@ -282,6 +307,8 @@ export class World {
 
   removeCore(id: number): void {
     this.cores.delete(id);
+    this.powers.forget(id);
+    for (const c of this.cores.values()) if (c.decoyOf === id) this.cores.delete(c.id);
     this.bots.delete(id);
   }
 
@@ -364,6 +391,7 @@ export class World {
       if (core && core.alive) bot.think(this, core, dt);
     }
 
+    this.powers.step(dt);
     for (const core of this.cores.values()) {
       if (core.alive) this.updateCore(core, dt);
     }
@@ -378,13 +406,21 @@ export class World {
   }
 
   private updateCore(c: Core, dt: number): void {
+    if (c.decoyOf) {
+      c.decoyLife -= dt;
+      if (c.decoyLife <= 0) {
+        this.popDecoy(c, null);
+        return;
+      }
+      decoyWander(c, this.rng.next());
+    }
     // steering
     const turn = turnRate(c.mass) * dt;
     const d = angleDiff(c.heading, c.input.angle);
     c.heading += Math.max(-turn, Math.min(turn, d));
 
-    c.surging = c.input.surge && c.canSurge;
-    const speed = baseSpeed(c.mass) * (c.surging ? SURGE_SPEED_MULT : 1);
+    c.surging = c.input.surge && c.canSurge && c.snared <= 0 && !c.decoyOf;
+    const speed = baseSpeed(c.mass) * (c.surging ? SURGE_SPEED_MULT : 1) * (c.snared > 0 ? 0.3 : 1);
     const k = damp(7, dt);
     c.vx += (Math.cos(c.heading) * speed - c.vx) * k;
     c.vy += (Math.sin(c.heading) * speed - c.vy) * k;
@@ -415,7 +451,9 @@ export class World {
     // moons: regen toward target, slow decay of stolen extras
     const target = targetMoons(c.mass);
     const n = c.moons.length;
-    if (n < target) {
+    if (c.decoyOf) {
+      // phantoms don't grow
+    } else if (n < target) {
       c.regen += dt;
       c.excessDecay = 0;
       if (c.regen >= moonRegenInterval(n)) {
@@ -437,7 +475,7 @@ export class World {
     // orbit
     const targetR = baseOrbitRadius(c.mass, c.moons.length) * (c.surging ? SURGE_ORBIT_MULT : 1);
     c.orbitR += (targetR - c.orbitR) * damp(c.surging ? 7 : 5, dt);
-    const omega = ((MOON_LINEAR_SPEED * (c.surging ? SURGE_SPIN_MULT : 1)) / Math.max(30, c.orbitR)) * c.spin;
+    const omega = ((MOON_LINEAR_SPEED * (c.surging ? SURGE_SPIN_MULT : 1) * (c.snared > 0 ? 0.08 : 1)) / Math.max(30, c.orbitR)) * c.spin;
     c.orbitAngle = (c.orbitAngle + omega * dt) % TAU;
     this.spreadMoons(c, dt);
     this.computeMoonPositions(c);
@@ -464,7 +502,7 @@ export class World {
 
   private eatDust(): void {
     for (const c of this.cores.values()) {
-      if (!c.alive) continue;
+      if (!c.alive || c.decoyOf) continue;
       const r = c.r;
       const reach = r + 22;
       this.grid.query(c.x, c.y, reach, (d) => {
@@ -491,7 +529,7 @@ export class World {
       m.life -= dt;
       let captured = false;
       for (const c of this.cores.values()) {
-        if (!c.alive || c.moons.length >= MAX_MOONS) continue;
+        if (!c.alive || c.decoyOf || c.moons.length >= MAX_MOONS) continue;
         const rr = c.r + 14;
         if ((m.x - c.x) ** 2 + (m.y - c.y) ** 2 < rr * rr) {
           this.insertMoon(c);
@@ -514,6 +552,7 @@ export class World {
     for (const c of this.cores.values()) if (c.alive) list.push(c);
 
     const deaths = new Map<Core, Core | null>();
+    const pops = new Map<Core, Core>();
     const broken = new Map<Core, Set<number>>();
     const markBroken = (c: Core, i: number) => {
       let s = broken.get(c);
@@ -532,6 +571,24 @@ export class World {
         const br = b.r;
         const broad = a.orbitR + b.orbitR + a.moonR + b.moonR + ar + br;
         if (d2 > broad * broad) continue;
+
+        // phantoms: anything that touches them pops them, and they can't hurt anyone
+        if (a.decoyOf || b.decoyOf) {
+          if (a.decoyOf && b.decoyOf) continue;
+          const decoy = a.decoyOf ? a : b;
+          const real = a.decoyOf ? b : a;
+          if (real.id === decoy.decoyOf || pops.has(decoy)) continue;
+          const dd = Math.sqrt(d2);
+          let hit = dd < decoy.r + real.r;
+          for (let p = 0; !hit && p < real.mx.length; p++) {
+            const ex = real.mx[p] - decoy.x;
+            const ey = real.my[p] - decoy.y;
+            const ed = Math.sqrt(ex * ex + ey * ey);
+            hit = ed < real.moonR + decoy.r || Math.abs(ed - decoy.orbitR) < real.moonR + decoy.moonR;
+          }
+          if (hit) pops.set(decoy, real);
+          continue;
+        }
 
         // body contact: soft push, heavier core moves less
         const d = Math.sqrt(d2) || 0.001;
@@ -630,10 +687,27 @@ export class World {
     }
 
     for (const [victim, killer] of deaths) this.kill(victim, killer);
+    for (const [decoy, by] of pops) this.popDecoy(decoy, by);
+  }
+
+  /** A phantom vanishes — fooled someone, or simply ran out. */
+  popDecoy(d: Core, by: Core | null): void {
+    if (!this.cores.has(d.id)) return;
+    this.cores.delete(d.id);
+    this.events.push({ t: 'decoyPop', id: d.id, owner: d.decoyOf, x: d.x, y: d.y, by: by ? by.id : null, byName: by ? by.name : '' });
   }
 
   kill(victim: Core, killer: Core | null, cause: DeathCause = killer ? 'bite' : 'rim'): void {
     if (!victim.alive) return;
+    if (victim.decoyOf) {
+      this.popDecoy(victim, killer);
+      return;
+    }
+    // a bite gives the mimic away
+    if (killer && killer.disguise > 0) this.powers.endDisguise(killer);
+    // your phantoms die with you
+    for (const c of this.cores.values()) if (c.decoyOf === victim.id) this.popDecoy(c, null);
+    this.powers.forget(victim.id);
     victim.alive = false;
     victim.killedBy = killer ? killer.name : cause === 'wraith' ? 'the dark' : null;
 
@@ -754,7 +828,7 @@ export class World {
   /** Alive cores sorted by mass, descending. */
   ranking(): Core[] {
     const arr: Core[] = [];
-    for (const c of this.cores.values()) if (c.alive) arr.push(c);
+    for (const c of this.cores.values()) if (c.alive && !c.decoyOf) arr.push(c);
     arr.sort((a, b) => b.mass - a.mass);
     return arr;
   }
