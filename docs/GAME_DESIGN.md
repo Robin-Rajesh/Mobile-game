@@ -23,6 +23,33 @@ Moonbite is a real-time, drop-in/drop-out arena game in the same family as slith
 | **Starfall** | Every ~48s a zone gets marked on everyone's map, a countdown runs, then gold dust rains down. It pulls everyone into one fight. |
 | **Spawn shield** | 3 seconds as a ghost: you can't be bitten and your moons can't bite. |
 
+## 🩸 The Blood Moon (horror event)
+
+Every 2.5–3 minutes the game turns into something else.
+
+1. **Warning (6s).** Three church-bell tolls, the sky drains to red, a giant Blood Moon rises behind the arena (if you look twice, it has a face), and the announcer stamps **BLOOD MOON**.
+2. **The dark (34s).** The lights go out: you see only a flickering flashlight radius around your core. The music becomes a horror score with a detuned drone, a heartbeat kick, tritone bells, whispers and a bending whistle. Every other core turns **hollow**: dark veins, empty sockets with burning pinpoints, and a stitched grin full of teeth.
+3. **Wraiths** crawl out of the dark 700–1000u from a player (humans are picked 60% of the time) and hunt. Their **red eyes are drawn above the darkness**, so you see them coming before you see them. They're slower than a small core but lunge when close, so surging is how you escape. Your moons can't kill them; a moon only **wards** one off (the wraith staggers and gets knocked back) and the moon shatters. Get caught with nothing between you and a wraith and you're **TAKEN**.
+4. **Sunstones** (smug little suns, which glow through the dark and show on the minimap) let you fight back. Grab one to go **Radiant** for 9s: a golden aura and burning moons, wraiths turn pale and flee, and anything you touch is **banished** (+30 mass and a ring of gold dust).
+5. **Dawn.** The survivors get +40 mass, the leftover wraiths dissolve into light, and the announcer says **DAWN**.
+
+The heartbeat vignette and haptic pulse speed up as the nearest hunting wraith gets closer. Starfall is suspended so there's only one spectacle at a time. Daily missions include **Banish N wraiths** and **Survive a Blood Moon**.
+
+### Kill-cams
+
+Deaths during the Blood Moon (to a wraith, or to another player) cut to a full-screen **kill-cam**. Your own bites and banishes during the event get a short letterboxed one. There are six original variants, never the same twice in a row, each with its own sound sting and haptic hit:
+
+| Variant | What happens |
+|---|---|
+| **The Maw** | Rows of teeth slam shut from the top and bottom of the screen; eyes open above the closed jaw. |
+| **Tendrils** | Ink tendrils lash out, coil, squeeze the victim thin, and pop it. |
+| **The Eye** | A bloodshot eye opens in the dark, its slit pupil narrows, and the victim cracks into falling slabs. |
+| **Impaler** | A shadow spike (or a lance of the attacker's moons) skewers the victim, which hangs there and then slides off, dripping. |
+| **Drag-Under** | Shadow hands rise from a pool, grab, and pull the victim under. Bubbles follow. |
+| **Glitch** | RGB ghosting and tearing bands, then the victim shreds into strips. |
+
+Each play also randomizes the side, camera tilt, accent color, tendril/hand count and timing, and the title (TAKEN / DEVOURED / CLAIMED / FEAST / BANISHED…). Offline, the simulation slows to a crawl while a kill-cam plays. Online the world keeps going, so the in-match kill-cams are short.
+
 ### Why it plays well
 
 - **Risk/reward in one button.** Surge is how you attack, how you escape, and how you get yourself killed. A wide orbit has gaps a small, quick core can slip through.

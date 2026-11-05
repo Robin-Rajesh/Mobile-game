@@ -197,6 +197,9 @@ export class Room {
       da: w.addedDust.map(encodeDust),
       dr: w.removedDust.map((d) => d.id),
       e: events,
+      bm: w.bloodMoon.phase === 'calm' ? null : { p: w.bloodMoon.phase === 'warn' ? 1 : 2, in: Math.round(w.bloodMoon.remaining * 100) / 100 },
+      wr: w.bloodMoon.wraiths.map((x) => [x.id, Math.round(x.x), Math.round(x.y), (x.scared ? 1 : 0) | (x.stagger > 0 ? 2 : 0)]),
+      ss: w.bloodMoon.sunstones.map((x) => [x.id, Math.round(x.x), Math.round(x.y)]),
       sf: sf ? { x: Math.round(sf.x), y: Math.round(sf.y), r: sf.r, in: Math.round((sf.at - w.time) * 100) / 100 } : null,
     };
 

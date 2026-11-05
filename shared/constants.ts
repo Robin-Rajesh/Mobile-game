@@ -80,3 +80,24 @@ export function moonRegenInterval(current: number): number {
 export function dustRadius(value: number): number {
   return 3.5 + Math.sqrt(value) * 2.2;
 }
+
+// ── Blood Moon (horror event) ─────────────────────────────────────────────
+export const BLOODMOON_FIRST_DELAY = 70;
+export const BLOODMOON_INTERVAL_MIN = 140;
+export const BLOODMOON_INTERVAL_MAX = 190;
+export const BLOODMOON_WARNING_SECS = 6;
+export const BLOODMOON_DURATION = 34;
+export const WRAITH_RADIUS = 30;
+export const WRAITH_SPEED = 275;
+export const WRAITH_FLEE_SPEED = 190;
+export const WRAITH_MAX = 14;
+export const WRAITH_PER_CORE = 0.7;
+export const WRAITH_SPAWN_EVERY = 1.6;
+export const WRAITH_STAGGER_SECS = 0.35;
+export const SUNSTONE_RADIUS = 16;
+export const SUNSTONE_MAX = 7;
+export const SUNSTONE_SPAWN_EVERY = 4;
+export const RADIANT_SECS = 9;
+export const BANISH_MASS_REWARD = 30;
+export const BANISH_DUST = 14;
+export const DAWN_SURVIVAL_BONUS = 40;

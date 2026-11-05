@@ -35,6 +35,7 @@ import {
   targetMoons,
   turnRate,
 } from './constants';
+import { BloodMoon } from './bloodmoon';
 import { Rng, TAU, angleDiff, damp } from './math';
 
 export interface Dust {
@@ -68,7 +69,7 @@ export interface CoreInput {
   surge: boolean;
 }
 
-export type DeathCause = 'bite' | 'rim';
+export type DeathCause = 'bite' | 'rim' | 'wraith';
 
 export type GameEvent =
   | { t: 'kill'; killer: number | null; victim: number; x: number; y: number; kname: string; vname: string; streak: number; vmass: number; vskin: number; cause: DeathCause }
@@ -76,7 +77,14 @@ export type GameEvent =
   | { t: 'capture'; core: number; x: number; y: number }
   | { t: 'starfallWarn'; x: number; y: number; r: number; at: number }
   | { t: 'starfall'; x: number; y: number; r: number }
-  | { t: 'spawn'; core: number };
+  | { t: 'spawn'; core: number }
+  | { t: 'bloodWarn'; at: number }
+  | { t: 'bloodStart'; until: number }
+  | { t: 'bloodEnd'; survivors: number[]; wraiths: [number, number][] }
+  | { t: 'wraithSpawn'; x: number; y: number; target: number }
+  | { t: 'ward'; core: number; x: number; y: number }
+  | { t: 'banish'; x: number; y: number; by: number; name: string }
+  | { t: 'sunstone'; core: number; x: number; y: number };
 
 export class Core {
   x = 0;
@@ -91,6 +99,8 @@ export class Core {
   orbitR = 0;
   spin: 1 | -1 = 1;
   surging = false;
+  /** Seconds of Blood Moon radiance left (sunstone power-up). */
+  radiant = 0;
   shield = SPAWN_SHIELD_SECS;
   alive = true;
   input: CoreInput = { angle: 0, surge: false };
@@ -104,6 +114,7 @@ export class Core {
   kills = 0;
   streak = 0;
   moonsBroken = 0;
+  banished = 0;
   dustEaten = 0;
   peakMass = START_MASS;
   spawnTime = 0;
@@ -217,6 +228,7 @@ export class World {
 
   starfall: Starfall | null = null;
   nextStarfall: number;
+  readonly bloodMoon: BloodMoon;
 
   /** Drained by the consumer (renderer / network layer) each frame. */
   events: GameEvent[] = [];
@@ -236,6 +248,7 @@ export class World {
     this.arenaRadius = opts.arenaRadius ?? ARENA_RADIUS;
     this.dustTarget = opts.dustTarget ?? DUST_TARGET;
     this.nextStarfall = STARFALL_FIRST_DELAY;
+    this.bloodMoon = new BloodMoon(this);
     for (let i = 0; i < this.dustTarget; i++) this.spawnNaturalDust();
     // initial dust shouldn't be reported as "added" — consumers take a full snapshot on join.
     this.addedDust.length = 0;
@@ -358,6 +371,7 @@ export class World {
     this.eatDust();
     this.updateFreeMoons(dt);
     this.resolveCombat();
+    this.bloodMoon.step(dt);
     this.maintainDust(dt);
     this.updateStarfall(dt);
     this.processBotRespawns();
@@ -395,6 +409,7 @@ export class World {
     }
 
     if (c.shield > 0) c.shield -= dt;
+    if (c.radiant > 0) c.radiant -= dt;
     if (c.mass > c.peakMass) c.peakMass = c.mass;
 
     // moons: regen toward target, slow decay of stolen extras
@@ -617,10 +632,10 @@ export class World {
     for (const [victim, killer] of deaths) this.kill(victim, killer);
   }
 
-  kill(victim: Core, killer: Core | null): void {
+  kill(victim: Core, killer: Core | null, cause: DeathCause = killer ? 'bite' : 'rim'): void {
     if (!victim.alive) return;
     victim.alive = false;
-    victim.killedBy = killer ? killer.name : null;
+    victim.killedBy = killer ? killer.name : cause === 'wraith' ? 'the dark' : null;
 
     const R = this.arenaRadius;
     // scatter the victim's mass as dust
@@ -665,12 +680,12 @@ export class World {
       victim: victim.id,
       x: victim.x,
       y: victim.y,
-      kname: killer ? killer.name : '',
+      kname: killer ? killer.name : cause === 'wraith' ? 'the dark' : '',
       vname: victim.name,
       streak,
       vmass: Math.round(victim.mass),
       vskin: victim.skin,
-      cause: killer ? 'bite' : 'rim',
+      cause,
     });
 
     this.cores.delete(victim.id);
@@ -691,6 +706,11 @@ export class World {
 
   private updateStarfall(dt: number): void {
     const sf = this.starfall;
+    if (!sf && this.bloodMoon.phase !== 'calm') {
+      // one spectacle at a time
+      this.nextStarfall = Math.max(this.nextStarfall, this.time + STARFALL_WARNING_SECS + 10);
+      return;
+    }
     if (!sf) {
       if (this.time >= this.nextStarfall - STARFALL_WARNING_SECS) {
         const p = this.rng.inDisc(this.arenaRadius * 0.7);

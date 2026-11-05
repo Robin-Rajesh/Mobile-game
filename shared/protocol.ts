@@ -4,7 +4,7 @@
  */
 import type { GameEvent } from './world';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 // ── client → server
 export type ClientMsg =
@@ -33,9 +33,20 @@ export interface StarfallWire {
   in: number;
 }
 
+/** [id, x, y, flags] flags: 1 = scared, 2 = staggered */
+export type WraithTuple = [number, number, number, number];
+/** [id, x, y] */
+export type SunstoneTuple = [number, number, number];
+export interface BloodWire {
+  /** 1 = warning, 2 = dark */
+  p: 1 | 2;
+  /** seconds until the phase changes */
+  in: number;
+}
+
 export type ServerMsg =
   | { t: 'welcome'; v: number; id: number; arena: number; time: number; dust: DustTuple[]; players: PlayerTuple[] }
-  | { t: 's'; k: number; time: number; c: CoreTuple[]; fm: FreeMoonTuple[]; da: DustTuple[]; dr: number[]; e: GameEvent[]; sf: StarfallWire | null }
+  | { t: 's'; k: number; time: number; c: CoreTuple[]; fm: FreeMoonTuple[]; da: DustTuple[]; dr: number[]; e: GameEvent[]; sf: StarfallWire | null; bm: BloodWire | null; wr: WraithTuple[]; ss: SunstoneTuple[] }
   | { t: 'you'; id: number }
   | { t: 'pj'; p: PlayerTuple }
   | { t: 'pl'; id: number }
@@ -45,6 +56,7 @@ export type ServerMsg =
 
 export const FLAG_SURGE = 1;
 export const FLAG_SHIELD = 2;
+export const FLAG_RADIANT = 4;
 
 export const q = (n: number): number => Math.round(n);
 export const q100 = (n: number): number => Math.round(n * 100);

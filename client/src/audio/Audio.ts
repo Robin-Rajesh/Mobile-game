@@ -17,6 +17,7 @@ class AudioEngine {
   private musicTimer: number | null = null;
   private musicStep = 0;
   private musicIntensity = 0;
+  private horror = 0;
   sfxOn = true;
   musicOn = true;
 
@@ -68,6 +69,11 @@ class AudioEngine {
   /** 0 = menu (sparse), 1 = in-game, 2 = high tension */
   setIntensity(level: number): void {
     this.musicIntensity = level;
+  }
+
+  /** 0 = normal soundtrack, 1 = Blood Moon horror score */
+  setHorror(v: number): void {
+    this.horror = v;
   }
 
   // ───────────────────────────── primitives
@@ -221,6 +227,89 @@ class AudioEngine {
     }
   }
 
+  // ───────────────────────────── Blood Moon
+
+  /** Three slow church-bell tolls. */
+  bloodToll(): void {
+    for (let i = 0; i < 3; i++) {
+      const d = i * 1.1;
+      this.tone(98, 2.4, { type: 'sine', gain: 0.22, delay: d });
+      this.tone(98 * 2.76, 1.6, { type: 'sine', gain: 0.07, delay: d });
+      this.tone(98 * 5.4, 0.9, { type: 'sine', gain: 0.03, delay: d });
+    }
+  }
+
+  bloodStart(): void {
+    this.tone(55, 2.5, { type: 'sawtooth', gain: 0.12, slideTo: 30 });
+    this.tone(41, 3, { type: 'sine', gain: 0.4, slideTo: 25 });
+    this.noise(2.2, { gain: 0.3, freq: 200, sweepTo: 3000, type: 'bandpass', q: 0.7 });
+    this.tone(1661, 1.4, { type: 'sine', gain: 0.03, delay: 0.4, slideTo: 1500 });
+  }
+
+  /** A wraith noticed you. */
+  screech(near: number): void {
+    const g = 0.03 + near * 0.12;
+    this.noise(0.5, { gain: g, freq: 2400, sweepTo: 700, q: 6 });
+    this.tone(900, 0.45, { type: 'sawtooth', gain: g * 0.4, slideTo: 260, detune: 30 });
+    this.tone(940, 0.45, { type: 'sawtooth', gain: g * 0.4, slideTo: 250, detune: -30 });
+  }
+
+  ward(): void {
+    this.tone(200, 0.2, { type: 'square', gain: 0.06, slideTo: 90 });
+    this.noise(0.15, { gain: 0.12, freq: 1500, q: 2 });
+  }
+
+  banish(mine: boolean): void {
+    const g = mine ? 0.1 : 0.03;
+    [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, 0.6, { type: 'triangle', gain: g, delay: i * 0.05 }));
+    this.noise(0.6, { gain: g * 1.5, freq: 6000, sweepTo: 2000, type: 'highpass' });
+  }
+
+  sunstone(): void {
+    [523, 659, 784, 1046, 1318, 1568].forEach((f, i) => this.tone(f, 0.5, { type: 'triangle', gain: 0.07, delay: i * 0.05 }));
+    for (const f of [261, 329, 392]) this.tone(f, 1.6, { type: 'sawtooth', gain: 0.025, attack: 0.3 });
+  }
+
+  dawn(): void {
+    for (const [f, d] of [[392, 0], [494, 0.08], [587, 0.16], [784, 0.24]] as const) this.tone(f, 2, { type: 'triangle', gain: 0.07, delay: d, attack: 0.2 });
+  }
+
+  /** Kill-cam sting: every variant has its own sound. */
+  cine(variant: string, phase: 'start' | 'impact'): void {
+    if (phase === 'start') {
+      this.noise(0.6, { gain: 0.18, freq: 300, sweepTo: 4000, q: 1.2 });
+      this.tone(110, 0.7, { type: 'sawtooth', gain: 0.08, slideTo: 220 });
+      return;
+    }
+    switch (variant) {
+      case 'maw':
+        this.noise(0.25, { gain: 0.5, freq: 900, sweepTo: 150, type: 'lowpass' });
+        this.tone(90, 0.4, { type: 'square', gain: 0.25, slideTo: 40 });
+        break;
+      case 'tendrils':
+        this.noise(0.5, { gain: 0.35, freq: 400, sweepTo: 1200, q: 4 });
+        this.tone(60, 0.5, { type: 'sine', gain: 0.4, slideTo: 30 });
+        break;
+      case 'eye':
+        this.tone(1244, 0.9, { type: 'sine', gain: 0.1 });
+        this.tone(1318, 0.9, { type: 'sine', gain: 0.1 });
+        this.noise(0.8, { gain: 0.25, freq: 2000, sweepTo: 80, type: 'lowpass' });
+        break;
+      case 'impale':
+        this.tone(3000, 0.15, { type: 'square', gain: 0.08, slideTo: 600 });
+        this.tone(70, 0.6, { type: 'sine', gain: 0.45, slideTo: 30 });
+        break;
+      case 'drag':
+        this.tone(80, 1.2, { type: 'sawtooth', gain: 0.12, slideTo: 30 });
+        this.noise(1, { gain: 0.2, freq: 250, type: 'lowpass' });
+        break;
+      default:
+        for (let i = 0; i < 6; i++) this.tone(200 + Math.random() * 2000, 0.05, { type: 'square', gain: 0.07, delay: i * 0.04 });
+        this.noise(0.4, { gain: 0.3, freq: 5000, type: 'highpass' });
+    }
+    this.tone(45, 0.9, { type: 'sine', gain: 0.5, slideTo: 25 });
+  }
+
   // ───────────────────────────── generative music
 
   /**
@@ -250,8 +339,91 @@ class AudioEngine {
     this.musicTimer = window.setInterval(tick, 60);
   }
 
+  /** Horror score: detuned drone, heartbeat, tritone bells, a whistle that bends. */
+  private scheduleHorror(step: number, t: number, stepDur: number): void {
+    const ctx = this.ctx!;
+    const bus = this.musicBus;
+    const osc = (type: OscillatorType, f: number, dur: number, gain: number, attack: number, slide?: number) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = 500;
+      o.type = type;
+      o.frequency.setValueAtTime(f, t);
+      if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(gain, t + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(filt).connect(g).connect(bus);
+      o.start(t);
+      o.stop(t + dur + 0.05);
+      return o;
+    };
+    if (step % 16 === 0) {
+      osc('sawtooth', 55, stepDur * 17, 0.09, 1.2);
+      osc('sawtooth', 58.27, stepDur * 17, 0.07, 1.2);
+    }
+    // lub-dub
+    if (step % 8 === 0) osc('sine', 75, 0.22, 0.6, 0.005, 35);
+    if (step % 8 === 2) osc('sine', 65, 0.2, 0.4, 0.005, 32);
+    if (step % 32 === 8) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      const lfo = ctx.createOscillator();
+      const lg = ctx.createGain();
+      o.frequency.setValueAtTime(1244, t);
+      o.frequency.linearRampToValueAtTime(1175, t + 3);
+      lfo.frequency.value = 5.5;
+      lg.gain.value = 14;
+      lfo.connect(lg).connect(o.frequency);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.035, t + 1);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+      o.connect(g).connect(bus);
+      o.start(t);
+      lfo.start(t);
+      o.stop(t + 3.3);
+      lfo.stop(t + 3.3);
+    }
+    if (step % 16 === 12 && Math.random() < 0.6) {
+      for (const f of [311.13, 440]) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'triangle';
+        o.frequency.value = f * (Math.random() < 0.5 ? 1 : 2);
+        g.gain.setValueAtTime(0.06, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+        o.connect(g).connect(bus);
+        o.start(t);
+        o.stop(t + 1.9);
+      }
+    }
+    if (step % 32 === 20 && this.noiseBuf) {
+      // whispers
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.Q.value = 8;
+      f.frequency.setValueAtTime(700 + Math.random() * 900, t);
+      f.frequency.linearRampToValueAtTime(400 + Math.random() * 1400, t + 1.5);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.12, t + 0.5);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+      src.connect(f).connect(g).connect(bus);
+      src.start(t, Math.random() * 0.4);
+      src.stop(t + 1.7);
+    }
+  }
+
   private scheduleStep(step: number, t: number, chords: number[][], stepDur: number): void {
     const ctx = this.ctx!;
+    if (this.horror > 0.5) {
+      this.scheduleHorror(step, t, stepDur);
+      return;
+    }
     const chord = chords[Math.floor(step / 16) % chords.length];
     const bus = this.musicBus;
     const voice = (f: number, dur: number, type: Wave, gain: number, attack: number) => {

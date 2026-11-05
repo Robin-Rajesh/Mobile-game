@@ -113,6 +113,23 @@ export class BotBrain implements BotController {
       }
     }
 
+    // ── Blood Moon: wraiths are the scariest thing in the arena
+    const bm = world.bloodMoon;
+    if (bm.dark && me.radiant <= 0) {
+      for (const wr of bm.wraiths) {
+        const dx = wr.x - me.x;
+        const dy = wr.y - me.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const range = 520 + this.p.caution * 300;
+        if (d < range && !wr.scared) {
+          const wgt = (1 - d / range) * 2.4;
+          dangerX -= (dx / d) * wgt;
+          dangerY -= (dy / d) * wgt;
+          danger += wgt;
+        }
+      }
+    }
+
     // ── choose mode (with a little hysteresis so bots don't flicker)
     const fleeThreshold = 0.3 + (1 - this.p.caution) * 0.7;
     if (this.modeLock <= 0) {
@@ -217,6 +234,41 @@ export class BotBrain implements BotController {
       if (danger > 0) {
         gx += dangerX * 0.8;
         gy += dangerY * 0.8;
+      }
+    }
+
+    // ── Blood Moon overrides: hunt wraiths while radiant, otherwise race for sunstones
+    if (bm.dark) {
+      if (me.radiant > 0) {
+        let best: { x: number; y: number } | null = null;
+        let bd = 1300;
+        for (const wr of bm.wraiths) {
+          const d = Math.hypot(wr.x - me.x, wr.y - me.y);
+          if (d < bd) {
+            bd = d;
+            best = wr;
+          }
+        }
+        if (best) {
+          gx = (best.x - me.x) / (bd || 1);
+          gy = (best.y - me.y) / (bd || 1);
+          surge = me.canSurge && bd > 200 && rng.chance(0.5);
+        }
+      } else {
+        let best: { x: number; y: number } | null = null;
+        let bd = 650 + this.p.greed * 600;
+        for (const s of bm.sunstones) {
+          const d = Math.hypot(s.x - me.x, s.y - me.y);
+          if (d < bd) {
+            bd = d;
+            best = s;
+          }
+        }
+        if (best) {
+          const pull = 1.6 + this.p.skill;
+          gx += ((best.x - me.x) / (bd || 1)) * pull;
+          gy += ((best.y - me.y) / (bd || 1)) * pull;
+        }
       }
     }
 

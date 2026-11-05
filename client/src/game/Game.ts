@@ -27,6 +27,9 @@ interface Life {
   lastMoons: number;
   streak: number;
   hadCrown: boolean;
+  banished: number;
+  dawns: number;
+  radiantUntil: number;
 }
 
 const STREAK_CALLS = ['', 'BITE!', 'DOUBLE BITE!', 'TRIPLE BITE!', 'RAMPAGE!', 'UNSTOPPABLE!', 'MOON LORD!'];
@@ -58,6 +61,9 @@ export class Game {
   private onlineUrl = serverUrl();
   private onlineOk = false;
   private tutorialClock = 0;
+  private heartbeat = 0;
+  private bloodHintUntil = 0;
+  private readonly debugBlood = new URLSearchParams(location.search).has('bloodmoon');
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -73,6 +79,11 @@ export class Game {
       onSettings: (s) => this.applySettings(s),
     });
     this.input = new Input(canvas, uiRoot);
+    this.renderer.cinematic.onImpact = (v) => {
+      audio.cine(v, 'impact');
+      haptic('heavy');
+      this.renderer.addShake(0.6);
+    };
     this.applySettings(profile.data.settings);
     this.ui.showMenu();
     void this.probeServer();
@@ -92,7 +103,7 @@ export class Game {
   }
 
   private freshLife(): Life {
-    return { kills: 0, moonsBroken: 0, peak: 0, start: performance.now(), captures: 0, dust: 0, bestRank: 99, lastMoons: -1, streak: 0, hadCrown: false };
+    return { kills: 0, moonsBroken: 0, peak: 0, start: performance.now(), captures: 0, dust: 0, bestRank: 99, lastMoons: -1, streak: 0, hadCrown: false, banished: 0, dawns: 0, radiantUntil: 0 };
   }
 
   private applySettings(s: Settings): void {
@@ -152,6 +163,7 @@ export class Game {
     this.input.reset();
     this.input.setVisible(true);
     audio.setIntensity(1);
+    if (this.debugBlood && this.session === this.local) this.local.triggerBloodMoon(7);
   }
 
   private respawn(): void {
@@ -197,13 +209,29 @@ export class Game {
       bestRank: this.life.bestRank,
       captures: this.life.captures,
       dust: this.life.dust,
+      banished: this.life.banished,
+      dawns: this.life.dawns,
     };
   }
 
-  private onDeath(cause: 'bite' | 'rim' | 'lost', killer: string): void {
+  private onDeath(cause: 'bite' | 'rim' | 'lost' | 'wraith', killer: string, killerSkin: number | null = null): void {
     if (this.state !== 'playing') return;
     this.state = 'dying';
     this.deathTimer = cause === 'lost' ? 0.2 : 1.3;
+    // Blood Moon deaths get the full kill-cam
+    const mySkin = this.profile.data.skin;
+    if (cause === 'wraith' || (cause === 'bite' && this.session.blood.phase === 'dark' && killerSkin !== null)) {
+      const titles = cause === 'wraith' ? ['TAKEN', 'DEVOURED', 'CLAIMED', 'GONE'] : ['BETRAYED', 'BUTCHERED', 'SNUFFED'];
+      this.renderer.cinematic.play({
+        full: true,
+        attacker: cause === 'wraith' ? { kind: 'wraith' } : { kind: 'core', skin: killerSkin!, spooky: true },
+        victim: { kind: 'core', skin: mySkin },
+        title: titles[Math.floor(Math.random() * titles.length)],
+        sub: cause === 'wraith' ? 'the dark got you' : `by ${killer}`,
+      });
+      audio.cine('', 'start');
+      this.deathTimer = 2.5;
+    }
     this.input.reset();
     this.input.setVisible(false);
     this.ui.hint(null);
@@ -242,8 +270,12 @@ export class Game {
     this.input.enabled = playing;
     this.input.update();
 
+    const cine = this.renderer.cinematic;
+    cine.update(dt);
+    this.ui.setCinematic(cine.active);
     let timeScale = 1;
-    if (this.hitstop > 0) {
+    if (cine.active && this.session.kind === 'local') timeScale = 0.18;
+    else if (this.hitstop > 0) {
       this.hitstop -= dt;
       timeScale = 0.12;
     } else if (this.state === 'dying') {
@@ -268,6 +300,8 @@ export class Game {
     this.renderer.render(this.session, dt * Math.max(timeScale, 0.3), { meId: this.session.meId, crownId, attract: this.state === 'menu' });
 
     if (this.state === 'playing' || this.state === 'dying') this.updateHud(me, board, crownId, dt);
+    audio.setHorror(this.state === 'playing' || this.state === 'dying' ? this.renderer.horror : 0);
+    if (this.state !== 'playing') this.renderer.fear = Math.max(0, this.renderer.fear - dt);
 
     if (this.state === 'dying') {
       this.deathTimer -= dt;
@@ -354,6 +388,25 @@ export class Game {
       life.bestRank = Math.min(life.bestRank, this.session.rankOf(me.id));
     }
 
+    // Blood Moon fear: nearest hunting wraith drives the heartbeat
+    let nearest = Infinity;
+    for (const wr of this.session.wraiths) {
+      if (wr.scared) continue;
+      nearest = Math.min(nearest, Math.hypot(wr.x - me.x, wr.y - me.y));
+    }
+    const fear = me.radiant > 0 ? 0 : clamp(1 - (nearest - 80) / 650, 0, 1);
+    this.renderer.fear += (fear - this.renderer.fear) * Math.min(1, dt * 4);
+    this.heartbeat -= dt;
+    if (this.renderer.fear > 0.5 && this.heartbeat <= 0) {
+      this.heartbeat = 0.9 - this.renderer.fear * 0.45;
+      haptic('light');
+    }
+    if (this.renderer.horror > 0.6) audio.setIntensity(2);
+
+    if (performance.now() < this.bloodHintUntil) {
+      this.ui.hint('Wraiths can’t be bitten — your moons only <b>slow</b> them. Grab a <b>☀ sunstone</b> and turn the hunt around');
+      return;
+    }
     this.tutorial(me, dt);
   }
 
@@ -413,7 +466,9 @@ export class Game {
       this.ui.minimap.draw(this.session, this.session.meId, crownId, 1 / 15);
     }
     const sf = this.session.starfall;
-    this.ui.starfallAlert(sf && sf.in > 0 ? sf.in : null);
+    const bl = this.session.blood;
+    this.ui.bloodAlert(bl.phase, bl.in, me && me.radiant > 0 ? Math.max(0, (this.life.radiantUntil - performance.now()) / 1000) : 0);
+    this.ui.starfallAlert(bl.phase === 'calm' && sf && sf.in > 0 ? sf.in : null);
   }
 
   // ───────────────────────────────────────── events → feedback
@@ -448,7 +503,18 @@ export class Game {
         const near = this.nearness(e.x, e.y);
         const byMe = e.killer !== null && e.killer === meId;
         rend.killAt(e.x, e.y, e.vskin, coreRadius(e.vmass), near > 0.4, byMe);
-        if (playing || this.state === 'dying') this.ui.feed(e.killer !== null ? e.kname : null, e.vname, byMe, e.victim === meId);
+        if (playing || this.state === 'dying') this.ui.feed(e.killer !== null ? e.kname : null, e.vname, byMe, e.victim === meId, e.cause);
+        if (byMe && playing && this.session.blood.phase === 'dark' && !this.renderer.cinematic.active) {
+          const titles = ['FEAST', 'NO MERCY', 'CRUNCH', 'SAVAGE'];
+          this.renderer.cinematic.play({
+            full: false,
+            attacker: { kind: 'core', skin: this.profile.data.skin },
+            victim: { kind: 'core', skin: e.vskin, spooky: true },
+            title: titles[Math.floor(Math.random() * titles.length)],
+            sub: e.vname,
+          });
+          audio.cine('', 'start');
+        }
         if (byMe && playing) {
           this.life.kills++;
           this.life.streak = e.streak;
@@ -462,7 +528,10 @@ export class Game {
         } else if (playing) {
           audio.remoteKill(near);
         }
-        if (e.victim === meId && meId !== null) this.onDeath(e.cause, e.kname);
+        if (e.victim === meId && meId !== null) {
+          const ks = e.killer !== null ? this.session.cores.get(e.killer)?.skin ?? null : null;
+          this.onDeath(e.cause, e.kname, ks);
+        }
         break;
       }
       case 'clash': {
@@ -501,6 +570,92 @@ export class Game {
         break;
       }
       case 'spawn':
+        break;
+      case 'bloodWarn':
+        if (playing) {
+          audio.bloodToll();
+          this.ui.announce('BLOOD MOON', 'something is waking up…', 'pink');
+          haptic('medium');
+        }
+        break;
+      case 'bloodStart':
+        rend.addShake(0.5);
+        if (playing) {
+          audio.bloodStart();
+          haptic('heavy');
+          this.ui.announce('THEY’RE HUNTING', 'find a ☀ sunstone', 'pink');
+          if (!this.profile.data.bloodSeen) {
+            this.profile.data.bloodSeen = true;
+            this.profile.save();
+            this.bloodHintUntil = performance.now() + 7000;
+          }
+        }
+        break;
+      case 'bloodEnd':
+        for (const [x, y] of e.wraiths) {
+          rend.effects.ring(x, y, '#FFE6A8', 10, 120, 0.8, 6);
+          rend.effects.spark(x, y, '#A8D8FF', 10, 300, 0.6);
+        }
+        if (playing && meId !== null && e.survivors.includes(meId)) {
+          this.life.dawns++;
+          audio.dawn();
+          haptic('success');
+          this.ui.announce('DAWN', 'you survived · +40 mass', 'mint');
+        }
+        break;
+      case 'wraithSpawn':
+        if (playing && e.target === meId) {
+          audio.screech(this.nearness(e.x, e.y));
+          haptic('medium');
+        }
+        break;
+      case 'ward':
+        rend.effects.shards(e.x, e.y, '#3A0711', 6, 240, 7);
+        rend.effects.spark(e.x, e.y, '#FF2B4A', 8, 400, 0.3);
+        if (e.core === meId && playing) {
+          audio.ward();
+          haptic('medium');
+          rend.addShake(0.2);
+        }
+        break;
+      case 'banish': {
+        rend.effects.ring(e.x, e.y, '#FFE45C', 10, 180, 0.6, 10);
+        rend.effects.spark(e.x, e.y, '#FFFFFF', 22, 700, 0.5);
+        rend.effects.chunks(e.x, e.y, '#0B0410', 12, 400, 9);
+        const mine = e.by === meId;
+        if (playing) {
+          audio.banish(mine);
+          this.ui.feed(e.name, 'a wraith', mine, false, 'banish');
+        }
+        if (mine && playing) {
+          this.life.banished++;
+          haptic('heavy');
+          rend.floatText(e.x, e.y - 30, '+30', '#FFE45C', 30);
+          if (!this.renderer.cinematic.active && Math.random() < 0.6) {
+            this.renderer.cinematic.play({
+              full: false,
+              attacker: { kind: 'core', skin: this.profile.data.skin },
+              victim: { kind: 'wraith' },
+              title: ['BANISHED', 'BEGONE', 'PURGED'][Math.floor(Math.random() * 3)],
+              sub: 'back into the dark',
+            });
+            audio.cine('', 'start');
+          } else {
+            this.ui.announce('BANISHED!', '+30 mass', 'yellow');
+          }
+        }
+        break;
+      }
+      case 'sunstone':
+        rend.effects.ring(e.x, e.y, '#FFE45C', 10, 220, 0.6, 12);
+        rend.effects.spark(e.x, e.y, '#FFE45C', 16, 500, 0.5);
+        if (e.core === meId && playing) {
+          this.life.radiantUntil = performance.now() + 9000;
+          audio.sunstone();
+          haptic('success');
+          rend.addFlash(0.25, '#FFE45C');
+          this.ui.announce('RADIANT!', 'they fear you now — hunt them', 'yellow');
+        }
         break;
     }
   }

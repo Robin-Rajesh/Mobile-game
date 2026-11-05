@@ -55,6 +55,20 @@ export class Minimap {
       drawStar(ctx, sf.x * k, sf.y * k, 6, 2.2, this.t * 2);
     }
 
+    for (const st of session.sunstones) {
+      ctx.fillStyle = '#FFD84D';
+      drawStar(ctx, st.x * k, st.y * k, 4.5, 1.8, this.t * 3, 6);
+    }
+    const meCore = meId !== null ? session.cores.get(meId) : undefined;
+    for (const wr of session.wraiths) {
+      // you only sense the ones close to you
+      if (meCore && Math.hypot(wr.x - meCore.x, wr.y - meCore.y) > 1300) continue;
+      ctx.fillStyle = wr.scared ? '#A8D8FF' : `rgba(255,43,74,${0.6 + 0.4 * Math.sin(this.t * 10 + wr.id)})`;
+      ctx.beginPath();
+      ctx.arc(wr.x * k, wr.y * k, 2.6, 0, TAU);
+      ctx.fill();
+    }
+
     let me: { x: number; y: number } | null = null;
     for (const core of session.cores.values()) {
       if (core.id === meId) {

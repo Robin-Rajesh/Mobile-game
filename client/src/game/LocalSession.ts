@@ -3,7 +3,7 @@ import { LOCAL_TICK_RATE } from '../../../shared/constants';
 import { Rng } from '../../../shared/math';
 import { BOT_SKIN_POOL } from '../../../shared/skins';
 import { World } from '../../../shared/world';
-import type { BoardEntry, FrameOutput, PlayerInput, Session, ViewCore, ViewDust, ViewFreeMoon } from './session';
+import type { BloodState, BoardEntry, FrameOutput, PlayerInput, Session, ViewCore, ViewDust, ViewFreeMoon, ViewSunstone, ViewWraith } from './session';
 
 const STEP = 1 / LOCAL_TICK_RATE;
 const BOT_COUNT = 17;
@@ -53,6 +53,22 @@ export class LocalSession implements Session {
   get starfall(): { x: number; y: number; r: number; in: number } | null {
     const sf = this.world.starfall;
     return sf ? { x: sf.x, y: sf.y, r: sf.r, in: sf.at - this.world.time } : null;
+  }
+
+  get wraiths(): readonly ViewWraith[] {
+    return this.world.bloodMoon.wraiths;
+  }
+  get sunstones(): readonly ViewSunstone[] {
+    return this.world.bloodMoon.sunstones;
+  }
+  get blood(): BloodState {
+    const bm = this.world.bloodMoon;
+    return { phase: bm.phase, in: bm.remaining };
+  }
+
+  /** Debug / showcase: start the Blood Moon soon. */
+  triggerBloodMoon(inSecs = 6): void {
+    this.world.bloodMoon.trigger(inSecs);
   }
 
   update(dt: number, input: PlayerInput | null, timeScale: number): void {

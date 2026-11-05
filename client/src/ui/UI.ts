@@ -19,7 +19,7 @@ export interface UIHandlers {
 }
 
 export interface DeathInfo {
-  cause: 'bite' | 'rim' | 'lost';
+  cause: 'bite' | 'rim' | 'lost' | 'wraith';
   killer: string;
   mass: number;
   rank: number;
@@ -112,6 +112,8 @@ export class UI {
       <div class="feed" data-el="feed"></div>
       <div class="announce" data-el="announce"></div>
       <div class="sf-alert" data-el="sf">★ STARFALL INCOMING</div>
+      <div class="bm-alert" data-el="bm"></div>
+      <div class="rad-alert" data-el="rad"></div>
       <div class="hint" data-el="hint"></div>
       <button class="btn icon ghost small hud-exit interactive" data-act="exit" aria-label="Leave match">${ICON.exit}</button>
       <div class="net-badge" data-el="netBadge"></div>
@@ -241,6 +243,10 @@ export class UI {
 
   get current(): 'menu' | 'hud' | 'death' {
     return this.screen;
+  }
+
+  setCinematic(on: boolean): void {
+    this.root.classList.toggle('cine', on);
   }
 
   setConnecting(on: boolean): void {
@@ -387,6 +393,7 @@ export class UI {
       <div class="howto-item"><div class="ic" style="color:var(--pink)">»</div><p>${surge}: faster, and your orbit swings wide to snipe. It burns mass — and opens gaps in your guard.</p></div>
       <div class="howto-item"><div class="ic" style="color:var(--mint)">✕</div><p>Moons that collide <b>shatter</b>. Grab loose moons after a bite to steal them. Never touch the <b>red rim</b>.</p></div>
       <div class="howto-item"><div class="ic" style="color:#FFE45C">★</div><p><b>Starfall</b> drops a pile of gold dust somewhere on the map. Everyone sees it. Be first.</p></div>
+      <div class="howto-item"><div class="ic" style="color:#FF2B4A">☾</div><p>During a <b>Blood Moon</b> the lights go out and <b>wraiths</b> hunt you. Your moons only slow them. Grab a <b>☀ sunstone</b> to turn Radiant and banish them.</p></div>
     </div>`);
   }
 
@@ -427,12 +434,14 @@ export class UI {
     this.el.pop.textContent = String(pop);
   }
 
-  feed(killer: string | null, victim: string, meKiller: boolean, meVictim: boolean): void {
+  feed(killer: string | null, victim: string, meKiller: boolean, meVictim: boolean, cause: 'bite' | 'rim' | 'wraith' | 'banish' = 'bite'): void {
     const f = this.el.feed;
     const k = killer ? `<b class="${meKiller ? 'me' : ''}">${esc(killer)}</b>` : '';
     const v = `<b class="${meVictim ? 'me' : ''}">${esc(victim)}</b>`;
     const line = document.createElement('div');
-    line.innerHTML = killer ? `${k} <span class="verb">bit</span> ${v}` : `${v} <span class="verb">fell in the void</span>`;
+    if (cause === 'wraith') line.innerHTML = `<span class="verb dark">the dark took</span> ${v}`;
+    else if (cause === 'banish') line.innerHTML = `${k} <span class="verb gold">banished</span> ${v}`;
+    else line.innerHTML = killer ? `${k} <span class="verb">bit</span> ${v}` : `${v} <span class="verb">fell in the void</span>`;
     f.prepend(line);
     while (f.children.length > 4) f.lastElementChild!.remove();
     setTimeout(() => line.remove(), 4200);
@@ -455,6 +464,21 @@ export class UI {
     }
   }
 
+  bloodAlert(phase: 'calm' | 'warn' | 'dark', secs: number, radiant: number): void {
+    const el = this.el.bm;
+    if (phase === 'calm') el.classList.remove('on');
+    else {
+      el.classList.add('on');
+      const s = Math.max(0, Math.ceil(secs));
+      el.innerHTML = phase === 'warn' ? `☾ <span class="lbl">BLOOD MOON IN </span>${s}` : `☾ <span class="lbl">BLOOD MOON · </span>${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
+    const r = this.el.rad;
+    if (radiant > 0) {
+      r.classList.add('on');
+      r.innerHTML = `☀ <span class="lbl">RADIANT </span>${Math.ceil(radiant)}`;
+    } else r.classList.remove('on');
+  }
+
   starfallAlert(secs: number | null): void {
     const el = this.el.sf;
     if (secs === null || secs <= 0) {
@@ -462,7 +486,7 @@ export class UI {
       return;
     }
     el.classList.add('on');
-    el.textContent = `★ STARFALL IN ${Math.ceil(secs)}`;
+    el.innerHTML = `★ <span class="lbl">STARFALL IN </span>${Math.ceil(secs)}`;
   }
 
   // ───────────────────────────────────────── death
@@ -470,8 +494,9 @@ export class UI {
   showDeath(info: DeathInfo): void {
     this.show('death');
     const r = info.rewards;
-    const title = info.cause === 'rim' ? 'VOIDED!' : info.cause === 'lost' ? 'DISCONNECTED' : 'BITTEN!';
-    const by = info.cause === 'bite' ? `by <b>${esc(info.killer)}</b>` : info.cause === 'rim' ? 'you touched the red rim' : 'connection to the arena was lost';
+    const title = info.cause === 'rim' ? 'VOIDED!' : info.cause === 'lost' ? 'DISCONNECTED' : info.cause === 'wraith' ? 'TAKEN!' : 'BITTEN!';
+    const by =
+      info.cause === 'bite' ? `by <b>${esc(info.killer)}</b>` : info.cause === 'rim' ? 'you touched the red rim' : info.cause === 'wraith' ? 'a wraith dragged you into <b>the dark</b>' : 'connection to the arena was lost';
     const mm = Math.floor(info.secs / 60);
     const ss = String(Math.floor(info.secs % 60)).padStart(2, '0');
     const missions = r.missionsCompleted

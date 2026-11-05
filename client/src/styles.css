@@ -1250,3 +1250,73 @@ body {
   margin-right: 4px;
   vertical-align: -1px;
 }
+
+/* ───────────────────────────────────── Blood Moon */
+.bm-alert,
+.rad-alert {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--display);
+  font-size: 16px;
+  border: 3px solid #000;
+  border-radius: 999px;
+  padding: 4px 14px 3px;
+  box-shadow: 0 4px 0 #000;
+  display: none;
+  white-space: nowrap;
+}
+.bm-alert {
+  top: calc(84px + var(--safe-t));
+  color: #ffe6e9;
+  background: #a3122b;
+  animation: throb 0.9s ease-in-out infinite;
+}
+.rad-alert {
+  top: calc(122px + var(--safe-t));
+  color: var(--ink);
+  background: #ffd84d;
+}
+.bm-alert.on,
+.rad-alert.on {
+  display: block;
+}
+@keyframes throb {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  12% { transform: translateX(-50%) scale(1.07); }
+  24% { transform: translateX(-50%) scale(1); }
+  36% { transform: translateX(-50%) scale(1.05); }
+}
+.feed .verb.dark {
+  color: #ff2b4a;
+}
+.feed .verb.gold {
+  color: var(--yellow);
+}
+
+#ui.cine .hud,
+#ui.cine .surge-btn,
+#ui.cine .stick-base {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.hud {
+  transition: opacity 0.3s;
+}
+@media (max-width: 560px) {
+  .sf-alert,
+  .bm-alert {
+    top: calc(66px + var(--safe-t));
+    font-size: 14px;
+    padding: 3px 11px 2px;
+  }
+  .rad-alert {
+    top: calc(98px + var(--safe-t));
+    font-size: 14px;
+    padding: 3px 11px 2px;
+  }
+  .sf-alert .lbl,
+  .bm-alert .lbl {
+    display: none;
+  }
+}

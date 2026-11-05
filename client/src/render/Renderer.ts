@@ -2,7 +2,9 @@ import { dustRadius } from '../../../shared/constants';
 import { TAU, clamp, damp } from '../../../shared/math';
 import { skinById } from '../../../shared/skins';
 import type { Session, ViewCore, ViewDust } from '../game/session';
-import { DUST_COLORS, DUST_CORE_FRACTION, INK, MOON_SPRITE_SCALE, drawCoreBody, drawStar, dustSprite, moonSprite, prismColor } from './art';
+import { WRAITH_RADIUS } from '../../../shared/constants';
+import { DUST_COLORS, DUST_CORE_FRACTION, INK, MOON_SPRITE_SCALE, drawCoreBody, drawStar, drawSunstone, drawWraith, drawWraithEyes, dustSprite, glowSprite, moonSprite, prismColor } from './art';
+import { Cinematic } from './Cinematic';
 import type { Mood } from './art';
 import { Effects } from './effects';
 
@@ -52,6 +54,15 @@ export class Renderer {
   private flash = 0;
   private flashColor = '#ffffff';
   private rimDanger = 0;
+
+  /** 0..1 Blood Moon blend (smoothed) */
+  horror = 0;
+  /** 0..1 how close the nearest hunting wraith is to you */
+  fear = 0;
+  readonly cinematic = new Cinematic();
+  private dark: HTMLCanvasElement = document.createElement('canvas');
+  private wraithSeen = new Map<number, number>();
+  private bolt = 0;
 
   private visuals = new Map<number, CoreVisual>();
   private dustAnim = new Map<number, DustAnim>();
@@ -277,8 +288,16 @@ export class Renderer {
 
     this.effects.update(dt);
 
+    const bl = session.blood;
+    const target = bl.phase === 'dark' ? Math.min(1, bl.in / 3) : bl.phase === 'warn' ? 0.5 * clamp(1 - bl.in / 6, 0, 1) : 0;
+    this.horror += (target - this.horror) * damp(bl.phase === 'dark' ? 3 : 1.2, dt);
+    if (this.horror < 0.002) this.horror = 0;
+    if (bl.phase === 'dark' && Math.random() < dt * 0.22) this.bolt = 1;
+    this.bolt = Math.max(0, this.bolt - dt * 5);
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawBackground(ctx);
+    if (this.horror > 0) this.drawBloodSky(ctx);
 
     // world space
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - this.cam.x * z + this.shakeX), dpr * (h / 2 - this.cam.y * z + this.shakeY));
@@ -293,12 +312,164 @@ export class Renderer {
     this.drawStarfall(ctx, session, px);
     this.drawDust(ctx, session, view);
     this.drawFreeMoons(ctx, session, view, px);
+    this.drawSunstones(ctx, session, view, px);
     this.drawCores(ctx, session, view, px, opts);
+    this.drawWraiths(ctx, session, view, px, opts, dt);
     this.effects.draw(ctx, px, FONT_DISPLAY);
 
     // screen space overlays
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (this.horror > 0.05 && !opts.attract) this.drawDarkness(ctx, session, opts);
     this.drawOverlays(ctx, session, opts);
+    this.cinematic.draw(ctx, w, h);
+  }
+
+  private toScreen(ctx: CanvasRenderingContext2D): void {
+    const { dpr, w, h } = this;
+    const z = this.cam.zoom;
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - this.cam.x * z + this.shakeX), dpr * (h / 2 - this.cam.y * z + this.shakeY));
+  }
+
+  // ───────────────────────────────────────── Blood Moon
+
+  private drawBloodSky(ctx: CanvasRenderingContext2D): void {
+    const { w, h } = this;
+    const k = this.horror;
+    ctx.fillStyle = `rgba(60,0,12,${0.6 * k})`;
+    ctx.fillRect(0, 0, w, h);
+    // the moon rises as the event takes hold
+    const R = Math.min(w, h) * 0.34;
+    const x = w * 0.7 - this.cam.x * 0.01;
+    const y = h * 0.28 + (1 - k) * h * 0.7 - this.cam.y * 0.01;
+    ctx.globalAlpha = k;
+    const halo = R * 3.2;
+    ctx.drawImage(glowSprite('rgba(255,30,50,0.55)'), x - halo / 2, y - halo / 2, halo, halo);
+    const g = ctx.createRadialGradient(x - R * 0.3, y - R * 0.3, R * 0.1, x, y, R);
+    g.addColorStop(0, '#E0263F');
+    g.addColorStop(0.7, '#9C0E25');
+    g.addColorStop(1, '#4A0310');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(40,0,8,0.45)';
+    for (const [cx, cy, cr] of [[-0.35, -0.1, 0.2], [0.25, 0.3, 0.16], [0.1, -0.4, 0.12], [-0.1, 0.45, 0.09], [0.45, -0.05, 0.08]]) {
+      ctx.beginPath();
+      ctx.arc(x + cx * R, y + cy * R, cr * R, 0, TAU);
+      ctx.fill();
+    }
+    // a faint face in the craters — only noticed on a second look
+    ctx.fillStyle = `rgba(20,0,4,${0.35 * k})`;
+    ctx.beginPath();
+    ctx.ellipse(x - R * 0.28, y - R * 0.05, R * 0.09, R * 0.05, 0.3, 0, TAU);
+    ctx.ellipse(x + R * 0.22, y - R * 0.1, R * 0.09, R * 0.05, -0.3, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  private drawSunstones(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+    const t = this.time;
+    for (const s of session.sunstones) {
+      if (s.x < view.x0 || s.x > view.x1 || s.y < view.y0 || s.y > view.y1) continue;
+      const bob = Math.sin(t * 3 + s.id) * 4;
+      const glow = 150 + Math.sin(t * 5 + s.id) * 15;
+      ctx.drawImage(glowSprite('rgba(255,200,60,0.7)'), s.x - glow / 2, s.y - glow / 2 + bob, glow, glow);
+      ctx.save();
+      ctx.translate(s.x, s.y + bob);
+      drawSunstone(ctx, 16, t, px);
+      ctx.restore();
+    }
+  }
+
+  private drawWraiths(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }, px: number, opts: RenderOptions, dt: number): void {
+    const t = this.time;
+    const me = opts.meId !== null ? session.cores.get(opts.meId) : undefined;
+    const alive = new Set<number>();
+    for (const wr of session.wraiths) {
+      alive.add(wr.id);
+      if (!this.wraithSeen.has(wr.id)) {
+        this.wraithSeen.set(wr.id, t);
+        if (this.isVisible(wr.x, wr.y, 50)) this.effects.ring(wr.x, wr.y + WRAITH_RADIUS, '#8E0F24', 10, 90, 0.6, 8);
+      }
+      if (wr.x < view.x0 - 60 || wr.x > view.x1 + 60 || wr.y < view.y0 - 60 || wr.y > view.y1 + 60) continue;
+      const rise = clamp((t - this.wraithSeen.get(wr.id)!) / 0.9, 0, 1);
+      const d = me ? Math.hypot(me.x - wr.x, me.y - wr.y) : 9999;
+      const maw = clamp(1 - d / 320, 0, 1);
+      const dir = Math.atan2(wr.vy, wr.vx);
+      // shadow pool + smoke
+      ctx.fillStyle = wr.scared ? 'rgba(120,180,255,0.18)' : 'rgba(0,0,0,0.5)';
+      ctx.beginPath();
+      ctx.ellipse(wr.x, wr.y + WRAITH_RADIUS * 0.9, WRAITH_RADIUS * 1.1, WRAITH_RADIUS * 0.35, 0, 0, TAU);
+      ctx.fill();
+      if (this.quality === 'high' && Math.random() < dt * 30) {
+        this.effects.dot(wr.x + (Math.random() - 0.5) * 30, wr.y + WRAITH_RADIUS * 0.6, -wr.vx * 0.2, -wr.vy * 0.2 - 20, wr.scared ? 'rgba(170,220,255,0.5)' : 'rgba(60,0,20,0.7)', 9, 0.7);
+      }
+      const flicker = wr.stagger > 0 ? 0.5 + 0.5 * Math.sin(t * 60) : 1;
+      ctx.save();
+      ctx.translate(wr.x, wr.y + Math.sin(t * 4 + wr.id) * 4);
+      ctx.globalAlpha = flicker;
+      drawWraith(ctx, WRAITH_RADIUS, { dir, scared: wr.scared, maw, rise, t: t + wr.id, eyes: true }, px);
+      ctx.restore();
+    }
+    for (const id of this.wraithSeen.keys()) if (!alive.has(id)) this.wraithSeen.delete(id);
+  }
+
+  /** Flashlight darkness: only light sources cut through. Eyes glow on top. */
+  private drawDarkness(ctx: CanvasRenderingContext2D, session: Session, opts: RenderOptions): void {
+    const level = clamp((this.horror - 0.25) / 0.75, 0, 1);
+    if (level <= 0) return;
+    const { w, h } = this;
+    const scale = 0.5;
+    const dw = Math.ceil(w * scale);
+    const dh = Math.ceil(h * scale);
+    const c = this.dark;
+    if (c.width !== dw || c.height !== dh) {
+      c.width = dw;
+      c.height = dh;
+    }
+    const g = c.getContext('2d')!;
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, dw, dh);
+    g.fillStyle = `rgba(4,0,6,${0.95 * level})`;
+    g.fillRect(0, 0, dw, dh);
+    g.globalCompositeOperation = 'destination-out';
+    const light = glowSprite('rgba(255,255,255,1)');
+    const z = this.cam.zoom;
+    const hole = (x: number, y: number, r: number) => {
+      const sp = this.worldToScreen(x, y);
+      const rr = r * z * scale * 2;
+      g.drawImage(light, sp.x * scale - rr / 2, sp.y * scale - rr / 2, rr, rr);
+    };
+    const me = opts.meId !== null ? session.cores.get(opts.meId) : undefined;
+    if (me) {
+      const flick = 1 + Math.sin(this.time * 17) * 0.02 + (Math.random() - 0.5) * 0.03;
+      const r = (me.orbitR * 1.35 + 240) * (me.radiant > 0 ? 1.8 : 1) * flick;
+      hole(me.x, me.y, r);
+      hole(me.x, me.y, r * 0.6);
+    }
+    for (const s of session.sunstones) hole(s.x, s.y, 170);
+    for (const c2 of session.cores.values()) if (c2.radiant > 0 && c2 !== me) hole(c2.x, c2.y, 300);
+    ctx.drawImage(c, 0, 0, w, h);
+
+    // eyes and sunstone glints pierce the dark
+    this.toScreen(ctx);
+    const t = this.time;
+    for (const wr of session.wraiths) {
+      if (!this.isVisible(wr.x, wr.y, 40)) continue;
+      ctx.save();
+      ctx.translate(wr.x, wr.y + Math.sin(t * 4 + wr.id) * 4);
+      ctx.globalAlpha = level;
+      drawWraithEyes(ctx, WRAITH_RADIUS, { dir: Math.atan2(wr.vy, wr.vx), scared: wr.scared, maw: 0, rise: 1, t: t + wr.id, eyes: true });
+      ctx.restore();
+    }
+    for (const s of session.sunstones) {
+      if (!this.isVisible(s.x, s.y, 40)) continue;
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 6 + s.id);
+      ctx.fillStyle = '#FFE45C';
+      drawStar(ctx, s.x, s.y, 14, 4, t);
+    }
+    ctx.globalAlpha = 1;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
   private drawBackground(ctx: CanvasRenderingContext2D): void {
@@ -572,6 +743,25 @@ export class Renderer {
       const stretch = 1 + Math.min(0.07, speed / 6000) + Math.sin(t * 22) * v.chomp * 0.03;
       const dir = Math.atan2(c.vy, c.vx);
 
+      if (c.radiant > 0) {
+        const aura = (c.orbitR + 60) * 2.2 * (1 + Math.sin(t * 8) * 0.05);
+        ctx.drawImage(glowSprite('rgba(255,200,60,0.55)'), c.x - aura / 2, c.y - aura / 2, aura, aura);
+        ctx.save();
+        ctx.translate(c.x, c.y);
+        ctx.rotate(t * 1.5);
+        ctx.fillStyle = 'rgba(255,214,90,0.5)';
+        for (let i = 0; i < 10; i++) {
+          ctx.rotate(TAU / 10);
+          ctx.beginPath();
+          ctx.moveTo(r * 1.1, -r * 0.18);
+          ctx.lineTo(r * 2.1, 0);
+          ctx.lineTo(r * 1.1, r * 0.18);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      const spooky = c.id === opts.meId || c.radiant > 0 ? 0 : this.horror;
+
       ctx.save();
       ctx.translate(c.x, c.y);
       if (c.shield > 0) ctx.globalAlpha = 0.55 + 0.25 * Math.sin(t * 14);
@@ -579,7 +769,7 @@ export class Renderer {
       ctx.rotate(dir);
       ctx.scale(stretch, 1 / stretch);
       ctx.rotate(-dir);
-      drawCoreBody(ctx, r, skin, { look: c.heading, blink: v.blink, mood, chomp: v.chomp }, t, px);
+      drawCoreBody(ctx, r, skin, { look: c.heading, blink: v.blink, mood, chomp: v.chomp, spooky }, t, px);
       ctx.restore();
 
       if (c.shield > 0) {
@@ -625,6 +815,10 @@ export class Renderer {
         const mx = c.x + Math.cos(a) * c.orbitR;
         const my = c.y + Math.sin(a) * c.orbitR;
         const facing = a + (c.spin * Math.PI) / 2;
+        if (c.radiant > 0) {
+          const gs = mr * 6;
+          ctx.drawImage(glowSprite('rgba(255,180,40,0.8)'), mx - gs / 2, my - gs / 2, gs, gs);
+        }
         ctx.save();
         ctx.translate(mx, my);
         ctx.rotate(facing);
@@ -695,6 +889,19 @@ export class Renderer {
       g.addColorStop(0, 'rgba(255,40,80,0)');
       g.addColorStop(1, `rgba(255,40,80,${0.45 * this.rimDanger * (0.75 + 0.25 * Math.sin(this.time * 10))})`);
       ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+    // heartbeat vignette when something is hunting you
+    if (this.fear > 0.02) {
+      const beat = Math.pow(Math.max(0, Math.sin(this.time * (5 + this.fear * 6))), 6);
+      const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.22, w / 2, h / 2, Math.max(w, h) * 0.7);
+      g.addColorStop(0, 'rgba(120,0,20,0)');
+      g.addColorStop(1, `rgba(150,0,25,${(0.35 + beat * 0.4) * this.fear})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+    if (this.bolt > 0.01) {
+      ctx.fillStyle = `rgba(255,220,230,${this.bolt * 0.22})`;
       ctx.fillRect(0, 0, w, h);
     }
     // starfall pointer when off-screen

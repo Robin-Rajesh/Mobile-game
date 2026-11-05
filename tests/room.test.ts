@@ -50,6 +50,12 @@ describe('Room', () => {
     expect(snaps.length).toBeGreaterThan(2);
     const last = snaps[snaps.length - 1];
     expect(last.t === 's' && last.c.some((c) => c[0] === client.coreId)).toBe(true);
+    // Blood Moon state rides along in every snapshot
+    room.world.bloodMoon.trigger(0.05);
+    await new Promise((r) => setTimeout(r, 250));
+    const s2 = inbox.filter((m) => m.t === 's').pop()!;
+    expect(s2.t === 's' && s2.bm && s2.bm.p).toBeTruthy();
+    expect(s2.t === 's' && Array.isArray(s2.wr) && Array.isArray(s2.ss)).toBe(true);
 
     room.remove(client);
     expect(room.world.cores.has(core.id)).toBe(false);

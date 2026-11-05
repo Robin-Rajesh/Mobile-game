@@ -5,7 +5,7 @@ import { storage } from './storage';
 
 const KEY = 'moonbite.profile.v1';
 
-export type MissionKind = 'bites' | 'mass' | 'survive' | 'clash' | 'dust' | 'games' | 'top' | 'steal';
+export type MissionKind = 'bites' | 'mass' | 'survive' | 'clash' | 'dust' | 'games' | 'top' | 'steal' | 'banish' | 'dawn';
 
 export interface Mission {
   kind: MissionKind;
@@ -36,6 +36,7 @@ export interface Profile {
   missions: Mission[];
   settings: Settings;
   tutorialSteps: number;
+  bloodSeen: boolean;
   streakDay: string;
   dayStreak: number;
 }
@@ -48,6 +49,8 @@ export interface MatchResult {
   bestRank: number;
   captures: number;
   dust: number;
+  banished: number;
+  dawns: number;
 }
 
 export interface MatchRewards {
@@ -83,6 +86,7 @@ function defaultProfile(): Profile {
     missions: [],
     settings: { sfx: true, music: true, haptics: true, quality: 'high', leftHanded: false },
     tutorialSteps: 0,
+    bloodSeen: false,
     streakDay: '',
     dayStreak: 0,
   };
@@ -97,6 +101,8 @@ const MISSION_POOL: { kind: MissionKind; targets: number[]; reward: number }[] =
   { kind: 'games', targets: [3, 5], reward: 40 },
   { kind: 'top', targets: [3, 1], reward: 90 },
   { kind: 'steal', targets: [3, 6, 10], reward: 60 },
+  { kind: 'banish', targets: [1, 3, 6], reward: 90 },
+  { kind: 'dawn', targets: [1, 2], reward: 80 },
 ];
 
 export function missionText(m: Mission): string {
@@ -117,6 +123,10 @@ export function missionText(m: Mission): string {
       return m.target === 1 ? 'Take the #1 spot' : `Reach the top ${m.target}`;
     case 'steal':
       return `Steal ${m.target} loose moons`;
+    case 'banish':
+      return `Banish ${m.target} wraith${m.target > 1 ? 's' : ''}`;
+    case 'dawn':
+      return m.target > 1 ? `Survive ${m.target} Blood Moons` : 'Survive a Blood Moon';
   }
 }
 
@@ -202,7 +212,7 @@ export class ProfileStore {
     const levelBefore = d.level;
     const levelProgressBefore = d.xp / xpToNext(d.level);
 
-    const xp = Math.round(r.peakMass / 8 + r.kills * 30 + r.aliveSecs / 3 + (r.bestRank <= 3 ? 40 : 0) + 10);
+    const xp = Math.round(r.peakMass / 8 + r.kills * 30 + r.aliveSecs / 3 + (r.bestRank <= 3 ? 40 : 0) + r.banished * 25 + r.dawns * 40 + 10);
     let coins = Math.round(r.peakMass / 30 + r.kills * 8 + (r.bestRank === 1 ? 25 : 0) + 3);
 
     const newBest = r.peakMass > d.best.mass && d.totals.games > 0;
@@ -226,6 +236,8 @@ export class ProfileStore {
         case 'games': value = 1; break;
         case 'top': value = r.bestRank <= m.target ? m.target : 0; break;
         case 'steal': value = r.captures; break;
+        case 'banish': value = r.banished; break;
+        case 'dawn': value = r.dawns; break;
       }
       m.progress = PER_ROUND.has(m.kind) ? Math.max(m.progress, Math.min(m.target, Math.round(value))) : Math.min(m.target, m.progress + Math.round(value));
       if (m.progress >= m.target) {

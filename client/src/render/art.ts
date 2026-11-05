@@ -1,7 +1,7 @@
 import { TAU } from '../../../shared/math';
 import type { Skin } from '../../../shared/skins';
 
-export type Mood = 'idle' | 'surge' | 'scared' | 'happy' | 'chomp';
+export type Mood = 'idle' | 'surge' | 'scared' | 'happy' | 'chomp' | 'dead';
 
 export interface FaceState {
   /** World-space look direction */
@@ -11,6 +11,8 @@ export interface FaceState {
   mood: Mood;
   /** 0..1 mouth opening for eating */
   chomp: number;
+  /** 0..1 Blood Moon corruption: hollow eyes, jagged grin, darkened body */
+  spooky?: number;
 }
 
 /** Dust palette: candy tones that pop on the ink background, index 6 = gold. */
@@ -74,7 +76,75 @@ export function drawCoreBody(ctx: CanvasRenderingContext2D, r: number, skin: Ski
   ctx.fill();
   ctx.globalAlpha /= 0.9;
 
-  drawFace(ctx, r, skin, face, t, px);
+  const sp = face.spooky ?? 0;
+  if (sp > 0.01) {
+    // corruption: the body darkens and veins creep in
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, 0, r - lw * 0.5, 0, TAU);
+    ctx.clip();
+    ctx.globalAlpha *= 0.72 * sp;
+    ctx.fillStyle = '#12040A';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.globalAlpha /= 0.72 * sp;
+    ctx.globalAlpha *= sp;
+    ctx.strokeStyle = '#8E0F24';
+    ctx.lineWidth = Math.max(r * 0.04, px);
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      const a = i * 1.7 + skin.id;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      ctx.quadraticCurveTo(Math.cos(a + 0.4) * r * 0.6, Math.sin(a + 0.4) * r * 0.6, Math.cos(a + 0.1) * r * 0.35, Math.sin(a + 0.1) * r * 0.35);
+      ctx.stroke();
+    }
+    ctx.globalAlpha /= sp;
+    ctx.restore();
+  }
+  if (sp > 0.5) drawHollowFace(ctx, r, face, t, px);
+  else drawFace(ctx, r, skin, face, t, px);
+}
+
+/** Blood Moon face: empty sockets with burning pinpoints and a stitched, jagged grin. */
+function drawHollowFace(ctx: CanvasRenderingContext2D, r: number, f: FaceState, t: number, px: number): void {
+  const lx = Math.cos(f.look);
+  const ly = Math.sin(f.look);
+  ctx.save();
+  ctx.translate(lx * r * 0.14, ly * r * 0.1);
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.ellipse(s * r * 0.3, -r * 0.16, r * 0.2, r * 0.25 * (1 - f.blink * 0.85), s * 0.25, 0, TAU);
+    ctx.fill();
+    const flick = 0.7 + 0.3 * Math.sin(t * 23 + s * 5);
+    ctx.fillStyle = `rgba(255,40,60,${flick})`;
+    ctx.beginPath();
+    ctx.arc(s * r * 0.3 + lx * r * 0.06, -r * 0.14 + ly * r * 0.05, r * 0.065, 0, TAU);
+    ctx.fill();
+  }
+  // grin
+  const w = r * 0.62;
+  const y = r * 0.3;
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, y - r * 0.06);
+  ctx.quadraticCurveTo(0, y + r * 0.3, w / 2, y - r * 0.06);
+  ctx.quadraticCurveTo(0, y + r * 0.1, -w / 2, y - r * 0.06);
+  ctx.fill();
+  ctx.fillStyle = '#F4EDE1';
+  const teeth = 6;
+  for (let i = 0; i < teeth; i++) {
+    const tx = -w / 2 + (w / teeth) * (i + 0.5);
+    const top = y - r * 0.02 + Math.abs(tx) * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(tx - r * 0.045, top);
+    ctx.lineTo(tx + r * 0.045, top);
+    ctx.lineTo(tx, top + r * 0.09);
+    ctx.closePath();
+    ctx.fill();
+  }
+  void px;
+  ctx.restore();
 }
 
 function drawFace(ctx: CanvasRenderingContext2D, r: number, skin: Skin, f: FaceState, t: number, px: number): void {
@@ -103,6 +173,19 @@ function drawFace(ctx: CanvasRenderingContext2D, r: number, skin: Skin, f: FaceS
   const angry = f.mood === 'surge' || skin.face === 'fangs';
 
   const eye = (ex: number, ey: number, er: number, sleepy: boolean, star: boolean) => {
+    if (f.mood === 'dead') {
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = thin * 1.6;
+      ctx.lineCap = 'round';
+      const k = er * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(ex - k, ey - k);
+      ctx.lineTo(ex + k, ey + k);
+      ctx.moveTo(ex + k, ey - k);
+      ctx.lineTo(ex - k, ey + k);
+      ctx.stroke();
+      return;
+    }
     if (f.mood === 'happy') {
       // ^ ^ eyes
       ctx.strokeStyle = ink;
@@ -236,6 +319,11 @@ function drawFace(ctx: CanvasRenderingContext2D, r: number, skin: Skin, f: FaceS
     ctx.beginPath();
     ctx.moveTo(-r * 0.2, my + r * 0.01);
     ctx.lineTo(r * 0.2, my + r * 0.01);
+    ctx.stroke();
+  } else if (f.mood === 'dead') {
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.16, my + r * 0.02);
+    for (let i = 1; i <= 4; i++) ctx.lineTo(-r * 0.16 + (r * 0.32 * i) / 4, my + (i % 2 ? -r * 0.04 : r * 0.04));
     ctx.stroke();
   } else if (f.mood === 'scared') {
     ctx.beginPath();
@@ -488,4 +576,175 @@ export function dustSprite(c: number): HTMLCanvasElement {
   }
   dustCache[c] = s;
   return s;
+}
+
+// ───────────────────────────────────────────── Blood Moon creatures
+
+export interface WraithLook {
+  /** facing angle */
+  dir: number;
+  scared: boolean;
+  /** 0..1 jaw opening */
+  maw: number;
+  /** 0..1 emergence */
+  rise: number;
+  t: number;
+  /** draw eyes at all (they're re-drawn above the darkness separately) */
+  eyes: boolean;
+}
+
+/** A wraith: ragged shadow with a tattered hem, burning eyes and a wide jaw. Origin = centre. */
+export function drawWraith(ctx: CanvasRenderingContext2D, R: number, look: WraithLook, px: number): void {
+  const { t, scared } = look;
+  const body = scared ? '#A8D8FF' : '#0B0410';
+  const rim = scared ? '#3C6FA0' : '#8E0F24';
+  ctx.save();
+  ctx.scale(1, look.rise);
+  ctx.translate(0, (1 - look.rise) * R);
+  // lean into the chase
+  const lean = Math.cos(look.dir) * 0.18;
+  ctx.transform(1, 0, -lean, 1, 0, 0);
+  ctx.beginPath();
+  ctx.arc(0, -R * 0.1, R, Math.PI, 0);
+  const hem = 7;
+  for (let i = 0; i <= hem; i++) {
+    const x = R - (2 * R * i) / hem;
+    const wave = Math.sin(t * 9 + i * 1.9) * R * 0.18;
+    const y = R * (i % 2 === 0 ? 0.95 : 0.55) + wave;
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = body;
+  ctx.fill();
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = Math.max(R * 0.09, 2 * px);
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+  if (look.eyes) drawWraithEyes(ctx, R, look);
+  // jaw
+  const open = scared ? 0.1 : look.maw;
+  const my = R * 0.28;
+  ctx.fillStyle = scared ? '#3C6FA0' : '#000000';
+  ctx.beginPath();
+  ctx.ellipse(0, my, R * 0.42, R * (0.06 + open * 0.3), 0, 0, TAU);
+  ctx.fill();
+  if (!scared) {
+    ctx.fillStyle = '#F4EDE1';
+    for (let i = 0; i < 5; i++) {
+      const tx = -R * 0.32 + i * R * 0.16;
+      ctx.beginPath();
+      ctx.moveTo(tx - R * 0.06, my - R * (0.04 + open * 0.24));
+      ctx.lineTo(tx + R * 0.06, my - R * (0.04 + open * 0.24));
+      ctx.lineTo(tx, my - R * (0.04 + open * 0.24) + R * 0.14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(tx - R * 0.06 + R * 0.08, my + R * (0.04 + open * 0.24));
+      ctx.lineTo(tx + R * 0.06 + R * 0.08, my + R * (0.04 + open * 0.24));
+      ctx.lineTo(tx + R * 0.08, my + R * (0.04 + open * 0.24) - R * 0.12);
+      ctx.closePath();
+      ctx.fill();
+    }
+  } else {
+    // wobbly frightened mouth
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = Math.max(R * 0.06, px);
+    ctx.beginPath();
+    for (let i = 0; i <= 6; i++) {
+      const x = -R * 0.36 + (R * 0.72 * i) / 6;
+      const y = my + (i % 2 ? -1 : 1) * R * 0.06;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function drawWraithEyes(ctx: CanvasRenderingContext2D, R: number, look: WraithLook): void {
+  const lx = Math.cos(look.dir) * R * 0.1;
+  const ly = Math.sin(look.dir) * R * 0.06;
+  for (const s of [-1, 1]) {
+    ctx.save();
+    ctx.translate(s * R * 0.34 + lx, -R * 0.22 + ly);
+    ctx.rotate(s * (look.scared ? -0.2 : 0.35));
+    if (look.scared) {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.14, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#1B3A5C';
+      ctx.beginPath();
+      ctx.arc(Math.sin(look.t * 30) * R * 0.03, 0, R * 0.05, 0, TAU);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(255,30,60,0.35)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, R * 0.3, R * 0.16, 0, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#FF2B4A';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, R * 0.19, R * 0.075, 0, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#FFE6A8';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, R * 0.05, R * 0.06, 0, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+/** Sunstone: a smug little sun with rotating rays. */
+export function drawSunstone(ctx: CanvasRenderingContext2D, R: number, t: number, px: number): void {
+  ctx.save();
+  ctx.rotate(t * 1.2);
+  ctx.fillStyle = '#FFB020';
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(R * 0.12, 1.5 * px);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  const rays = 8;
+  for (let i = 0; i < rays * 2; i++) {
+    const a = (i / (rays * 2)) * TAU;
+    const rr = i % 2 === 0 ? R * 1.55 : R * 1.05;
+    ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = '#FFE45C';
+  ctx.beginPath();
+  ctx.arc(0, 0, R, 0, TAU);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.arc(-R * 0.32, -R * 0.1, R * 0.11, 0, TAU);
+  ctx.arc(R * 0.32, -R * 0.1, R * 0.11, 0, TAU);
+  ctx.fill();
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(R * 0.09, px);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(0, R * 0.1, R * 0.3, 0.3, Math.PI - 0.3);
+  ctx.stroke();
+}
+
+const glowCache = new Map<string, HTMLCanvasElement>();
+/** Soft radial glow sprite (128px), coloured. */
+export function glowSprite(color: string): HTMLCanvasElement {
+  let c = glowCache.get(color);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, color);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  glowCache.set(color, c);
+  return c;
 }

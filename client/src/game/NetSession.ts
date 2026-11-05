@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from '../../../shared/protocol';
 import type { ClientMsg, DustTuple, ServerMsg } from '../../../shared/protocol';
 import { insertMoonOffset, spreadMoonOffsets } from '../../../shared/world';
 import type { GameEvent } from '../../../shared/world';
-import type { BoardEntry, FrameOutput, PlayerInput, Session, ViewCore, ViewDust, ViewFreeMoon } from './session';
+import type { BloodState, BoardEntry, FrameOutput, PlayerInput, Session, ViewCore, ViewDust, ViewFreeMoon, ViewSunstone, ViewWraith } from './session';
 
 /** Render remote entities this far in the past so we always have two snapshots to blend. */
 const INTERP_DELAY = 0.11;
@@ -23,6 +23,7 @@ class NetCore implements ViewCore {
   orbitR = 60;
   surging = false;
   shield = 0;
+  radiant = 0;
   spin: 1 | -1 = 1;
   /** Count the server says we should have; offsets ease toward it. */
   moonTarget = 0;
@@ -45,6 +46,9 @@ interface Snapshot {
   cores: Map<number, DecodedCore>;
   fm: ViewFreeMoon[];
   sf: { x: number; y: number; r: number; in: number } | null;
+  wr: Map<number, [number, number, number, number]>;
+  ss: ViewSunstone[];
+  bm: { p: 1 | 2; in: number } | null;
 }
 
 interface Pending {
@@ -62,6 +66,10 @@ export class NetSession implements Session {
   readonly dust = new Map<number, ViewDust>();
   freeMoons: ViewFreeMoon[] = [];
   starfall: { x: number; y: number; r: number; in: number } | null = null;
+  wraiths: ViewWraith[] = [];
+  sunstones: ViewSunstone[] = [];
+  blood: BloodState = { phase: 'calm', in: 999 };
+  private wraithMap = new Map<number, ViewWraith>();
   rtt = 80;
   lost = false;
 
@@ -207,7 +215,17 @@ export class NetSession implements Session {
         else this.clockOffset = lerp(this.clockOffset, target, 0.05);
         const cores = new Map<number, DecodedCore>();
         for (const t of m.c) cores.set(t[0], decodeCore(t));
-        this.snaps.push({ time: m.time, cores, fm: m.fm.map(([id, x, y, skin]) => ({ id, x, y, skin })), sf: m.sf });
+        const wr = new Map<number, [number, number, number, number]>();
+        for (const t of m.wr ?? []) wr.set(t[0], t);
+        this.snaps.push({
+          time: m.time,
+          cores,
+          fm: m.fm.map(([id, x, y, skin]) => ({ id, x, y, skin })),
+          sf: m.sf,
+          wr,
+          ss: (m.ss ?? []).map(([id, x, y]) => ({ id, x, y })),
+          bm: m.bm ?? null,
+        });
         if (this.snaps.length > 30) this.snaps.shift();
         this.pending.push({ time: m.time, events: m.e, added: m.da, removed: m.dr });
         break;
@@ -250,6 +268,7 @@ export class NetSession implements Session {
       c.orbitR = lerp(da.orbitR, db.orbitR, t);
       c.surging = db.surging;
       c.shield = db.shield ? 1 : 0;
+      c.radiant = db.radiant ? 1 : 0;
       c.spin = db.spin;
       c.moonTarget = db.moons;
     }
@@ -262,6 +281,31 @@ export class NetSession implements Session {
     }
 
     this.freeMoons = b.fm;
+    this.sunstones = b.ss;
+    this.blood = b.bm ? { phase: b.bm.p === 1 ? 'warn' : 'dark', in: b.bm.in - (renderTime - b.time) } : { phase: 'calm', in: 999 };
+    // wraiths interpolate like cores
+    const seen = new Set<number>();
+    for (const [id, tb] of b.wr) {
+      const ta = a.wr.get(id) ?? tb;
+      let v = this.wraithMap.get(id);
+      if (!v) {
+        v = { id, x: tb[1], y: tb[2], vx: 0, vy: 0, scared: false, stagger: 0 };
+        this.wraithMap.set(id, v);
+      }
+      const nx = lerp(ta[1], tb[1], t);
+      const ny = lerp(ta[2], tb[2], t);
+      if (dt > 0) {
+        v.vx = (nx - v.x) / dt;
+        v.vy = (ny - v.y) / dt;
+      }
+      v.x = nx;
+      v.y = ny;
+      v.scared = (tb[3] & 1) !== 0;
+      v.stagger = (tb[3] & 2) !== 0 ? 0.3 : 0;
+      seen.add(id);
+    }
+    for (const id of this.wraithMap.keys()) if (!seen.has(id)) this.wraithMap.delete(id);
+    this.wraiths = [...this.wraithMap.values()];
     this.starfall = b.sf ? { ...b.sf, in: b.sf.in - (renderTime - b.time) } : null;
 
     this.predictSelf(dt, input);
@@ -346,6 +390,12 @@ export class NetSession implements Session {
               }
             });
             c.moons.splice(best, 1);
+            c.moonTarget = Math.max(0, c.moonTarget - 1);
+          }
+        } else if (e.t === 'ward') {
+          const c = this.cores.get(e.core);
+          if (c && c.moons.length) {
+            c.moons.pop();
             c.moonTarget = Math.max(0, c.moonTarget - 1);
           }
         } else if (e.t === 'kill') {

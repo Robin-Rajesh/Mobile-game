@@ -19,6 +19,8 @@ export interface ViewCore {
   surging: boolean;
   /** > 0 while spawn-protected */
   shield: number;
+  /** > 0 while Radiant (sunstone power) */
+  radiant: number;
   spin: 1 | -1;
   readonly r: number;
   readonly moonR: number;
@@ -39,6 +41,30 @@ export interface ViewFreeMoon {
   x: number;
   y: number;
   skin: number;
+}
+
+export interface ViewWraith {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  scared: boolean;
+  stagger: number;
+}
+
+export interface ViewSunstone {
+  id: number;
+  x: number;
+  y: number;
+}
+
+export type BloodPhase = 'calm' | 'warn' | 'dark';
+
+export interface BloodState {
+  phase: BloodPhase;
+  /** seconds until the phase changes */
+  in: number;
 }
 
 export interface BoardEntry {
@@ -68,6 +94,9 @@ export interface Session {
   readonly dust: Map<number, ViewDust>;
   readonly freeMoons: ViewFreeMoon[];
   readonly starfall: { x: number; y: number; r: number; in: number } | null;
+  readonly wraiths: readonly ViewWraith[];
+  readonly sunstones: readonly ViewSunstone[];
+  readonly blood: BloodState;
   /** Advance by real time. timeScale < 1 is used for hit-stop (offline only). */
   update(dt: number, input: PlayerInput | null, timeScale: number): void;
   drain(out: FrameOutput): void;

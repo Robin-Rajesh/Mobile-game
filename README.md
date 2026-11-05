@@ -5,6 +5,7 @@
 - 📱 Touch-first controls: a floating joystick on the left thumb, and you hold anywhere on the right to **Surge**. Desktop uses mouse or keyboard.
 - 🌐 Authoritative multiplayer server, with an **offline arena of bots** used automatically when no server is reachable.
 - 🎨 Hand-built "sticker arcade" art with 16 skins, expressive faces and synthesized audio. No external asset downloads apart from the bundled fonts.
+- 🩸 **Blood Moon**: every few minutes the arena goes dark, the music turns to horror, every core turns hollow-eyed and **wraiths** hunt you. Grab a ☀ sunstone to turn Radiant and banish them. Deaths get freaky kill-cams with six randomized variants. Add `?bloodmoon` to the URL (offline) to trigger one about 7s after you spawn.
 - 🔁 Progression: XP and levels, coins, skin unlocks, daily missions, a day streak and personal bests.
 
 <p align="center"><img src="docs/screenshots/menu.png" width="250"> <img src="docs/screenshots/gameplay.png" width="250"> <img src="docs/screenshots/missions.png" width="250"></p>
