@@ -231,15 +231,53 @@ export class Powers {
     }
   }
 
-  /** Remove traps etc. belonging to a core that left. */
+  // ───────────────────────────────────── phantoms (all decoy rules live here)
+
+  /** Per-tick upkeep. Returns false if the phantom expired and was removed. */
+  tickPhantom(c: Core, dt: number): boolean {
+    c.decoyLife -= dt;
+    if (c.decoyLife <= 0) {
+      this.popPhantom(c, null);
+      return false;
+    }
+    // gentle wander so it doesn't look like it's on rails
+    c.input.angle = (c.input.angle + (this.w.rng.next() - 0.5) * 0.08) % TAU;
+    return true;
+  }
+
+  /** A real core and a phantom overlap: anything but its owner touching it pops it. */
+  phantomContact(a: Core, b: Core): { phantom: Core; by: Core } | null {
+    if (a.decoyOf && b.decoyOf) return null;
+    const phantom = a.decoyOf ? a : b;
+    const real = a.decoyOf ? b : a;
+    if (real.id === phantom.decoyOf) return null;
+    let hit = Math.hypot(real.x - phantom.x, real.y - phantom.y) < phantom.r + real.r;
+    for (let p = 0; !hit && p < real.mx.length; p++) {
+      const ed = Math.hypot(real.mx[p] - phantom.x, real.my[p] - phantom.y);
+      hit = ed < real.moonR + phantom.r || Math.abs(ed - phantom.orbitR) < real.moonR + phantom.moonR;
+    }
+    return hit ? { phantom, by: real } : null;
+  }
+
+  /** A phantom vanishes — it fooled someone, or simply ran out. */
+  popPhantom(d: Core, by: Core | null): void {
+    const w = this.w;
+    if (!w.cores.has(d.id)) return;
+    w.cores.delete(d.id);
+    w.events.push({ t: 'decoyPop', id: d.id, owner: d.decoyOf, x: d.x, y: d.y, by: by ? by.id : null, byName: by ? by.name : '' });
+  }
+
+  /** Bookkeeping when a real core dies. */
+  onKill(victim: Core, killer: Core | null): void {
+    // a bite gives a mimic away
+    if (killer && killer.disguise > 0) this.endDisguise(killer);
+    this.forget(victim.id);
+  }
+
+  /** Remove everything a core owned: phantoms, traps, blackouts. */
   forget(id: number): void {
+    for (const c of this.w.cores.values()) if (c.decoyOf === id) this.popPhantom(c, null);
     this.traps = this.traps.filter((t) => t.owner !== id);
     this.blackouts = this.blackouts.filter((b) => b.owner !== id);
   }
-}
-
-/** Gentle wander for decoys so they don't look like they're on rails. */
-export function decoyWander(c: Core, rnd: number): void {
-  c.input.angle += (rnd - 0.5) * 0.08;
-  c.input.angle %= TAU;
 }

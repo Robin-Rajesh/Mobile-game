@@ -11,7 +11,7 @@
 
 <p align="center"><img src="docs/screenshots/menu.png" width="250"> <img src="docs/screenshots/gameplay.png" width="250"> <img src="docs/screenshots/missions.png" width="250"></p>
 
-See **[docs/GAME_DESIGN.md](docs/GAME_DESIGN.md)** for the full design.
+See **[docs/GAME_DESIGN.md](docs/GAME_DESIGN.md)** for the full design and **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for how the code is organised (and recipes for adding features).
 
 ## Quick start
 

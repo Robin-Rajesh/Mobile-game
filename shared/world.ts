@@ -36,7 +36,7 @@ import {
   turnRate,
 } from './constants';
 import { BloodMoon } from './bloodmoon';
-import { POWER_IDS, Powers, decoyWander } from './powers';
+import { POWER_IDS, Powers } from './powers';
 import type { PowerId } from './powers';
 import { Rng, TAU, angleDiff, damp } from './math';
 
@@ -308,7 +308,6 @@ export class World {
   removeCore(id: number): void {
     this.cores.delete(id);
     this.powers.forget(id);
-    for (const c of this.cores.values()) if (c.decoyOf === id) this.cores.delete(c.id);
     this.bots.delete(id);
   }
 
@@ -406,14 +405,7 @@ export class World {
   }
 
   private updateCore(c: Core, dt: number): void {
-    if (c.decoyOf) {
-      c.decoyLife -= dt;
-      if (c.decoyLife <= 0) {
-        this.popDecoy(c, null);
-        return;
-      }
-      decoyWander(c, this.rng.next());
-    }
+    if (c.decoyOf && !this.powers.tickPhantom(c, dt)) return;
     // steering
     const turn = turnRate(c.mass) * dt;
     const d = angleDiff(c.heading, c.input.angle);
@@ -501,8 +493,7 @@ export class World {
   }
 
   private eatDust(): void {
-    for (const c of this.cores.values()) {
-      if (!c.alive || c.decoyOf) continue;
+    for (const c of this.players()) {
       const r = c.r;
       const reach = r + 22;
       this.grid.query(c.x, c.y, reach, (d) => {
@@ -528,8 +519,8 @@ export class World {
       m.vy *= k;
       m.life -= dt;
       let captured = false;
-      for (const c of this.cores.values()) {
-        if (!c.alive || c.decoyOf || c.moons.length >= MAX_MOONS) continue;
+      for (const c of this.players()) {
+        if (c.moons.length >= MAX_MOONS) continue;
         const rr = c.r + 14;
         if ((m.x - c.x) ** 2 + (m.y - c.y) ** 2 < rr * rr) {
           this.insertMoon(c);
@@ -572,21 +563,10 @@ export class World {
         const broad = a.orbitR + b.orbitR + a.moonR + b.moonR + ar + br;
         if (d2 > broad * broad) continue;
 
-        // phantoms: anything that touches them pops them, and they can't hurt anyone
+        // phantoms follow their own rules (they pop, they never hurt anyone)
         if (a.decoyOf || b.decoyOf) {
-          if (a.decoyOf && b.decoyOf) continue;
-          const decoy = a.decoyOf ? a : b;
-          const real = a.decoyOf ? b : a;
-          if (real.id === decoy.decoyOf || pops.has(decoy)) continue;
-          const dd = Math.sqrt(d2);
-          let hit = dd < decoy.r + real.r;
-          for (let p = 0; !hit && p < real.mx.length; p++) {
-            const ex = real.mx[p] - decoy.x;
-            const ey = real.my[p] - decoy.y;
-            const ed = Math.sqrt(ex * ex + ey * ey);
-            hit = ed < real.moonR + decoy.r || Math.abs(ed - decoy.orbitR) < real.moonR + decoy.moonR;
-          }
-          if (hit) pops.set(decoy, real);
+          const hit = this.powers.phantomContact(a, b);
+          if (hit && !pops.has(hit.phantom)) pops.set(hit.phantom, hit.by);
           continue;
         }
 
@@ -687,27 +667,16 @@ export class World {
     }
 
     for (const [victim, killer] of deaths) this.kill(victim, killer);
-    for (const [decoy, by] of pops) this.popDecoy(decoy, by);
-  }
-
-  /** A phantom vanishes — fooled someone, or simply ran out. */
-  popDecoy(d: Core, by: Core | null): void {
-    if (!this.cores.has(d.id)) return;
-    this.cores.delete(d.id);
-    this.events.push({ t: 'decoyPop', id: d.id, owner: d.decoyOf, x: d.x, y: d.y, by: by ? by.id : null, byName: by ? by.name : '' });
+    for (const [phantom, by] of pops) this.powers.popPhantom(phantom, by);
   }
 
   kill(victim: Core, killer: Core | null, cause: DeathCause = killer ? 'bite' : 'rim'): void {
     if (!victim.alive) return;
     if (victim.decoyOf) {
-      this.popDecoy(victim, killer);
+      this.powers.popPhantom(victim, killer);
       return;
     }
-    // a bite gives the mimic away
-    if (killer && killer.disguise > 0) this.powers.endDisguise(killer);
-    // your phantoms die with you
-    for (const c of this.cores.values()) if (c.decoyOf === victim.id) this.popDecoy(c, null);
-    this.powers.forget(victim.id);
+    this.powers.onKill(victim, killer);
     victim.alive = false;
     victim.killedBy = killer ? killer.name : cause === 'wraith' ? 'the dark' : null;
 
@@ -827,10 +796,14 @@ export class World {
 
   /** Alive cores sorted by mass, descending. */
   ranking(): Core[] {
-    const arr: Core[] = [];
-    for (const c of this.cores.values()) if (c.alive && !c.decoyOf) arr.push(c);
+    const arr = [...this.players()];
     arr.sort((a, b) => b.mass - a.mass);
     return arr;
+  }
+
+  /** Real, living participants — excludes Phantom decoys. Use this unless you mean "anything drawn". */
+  *players(): IterableIterator<Core> {
+    for (const c of this.cores.values()) if (c.alive && !c.decoyOf) yield c;
   }
 
   queryDust(x: number, y: number, radius: number, fn: (d: Dust) => void): void {

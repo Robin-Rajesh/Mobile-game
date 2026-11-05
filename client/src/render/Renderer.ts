@@ -2,10 +2,12 @@ import { dustRadius } from '../../../shared/constants';
 import { TAU, clamp, damp } from '../../../shared/math';
 import { skinById } from '../../../shared/skins';
 import type { Session, ViewCore, ViewDust } from '../game/session';
-import { WRAITH_RADIUS } from '../../../shared/constants';
-import { SNARE_RADIUS } from '../../../shared/powers';
-import { DUST_COLORS, DUST_CORE_FRACTION, INK, MOON_SPRITE_SCALE, drawCoreBody, drawStar, drawSunstone, drawWraith, drawWraithEyes, dustSprite, glowSprite, moonSprite, prismColor } from './art';
+import { DUST_COLORS, DUST_CORE_FRACTION, INK, MOON_SPRITE_SCALE, drawCoreBody, drawStar, dustSprite, glowSprite, moonSprite, prismColor } from './art';
 import { Cinematic } from './Cinematic';
+import { BloodMoonLayer } from './layers/BloodMoonLayer';
+import { DarknessLayer } from './layers/DarknessLayer';
+import type { LayerHost, RenderOptions, ViewRect } from './layers/host';
+import { PowersLayer } from './layers/PowersLayer';
 import type { Mood } from './art';
 import { Effects } from './effects';
 
@@ -29,21 +31,12 @@ interface DustAnim {
   delay: number;
 }
 
-export interface RenderOptions {
-  meId: number | null;
-  crownId: number | null;
-  /** Attract mode: hide HUD-ish world overlays (pointer chevron etc.) */
-  attract: boolean;
-  /** Phantoms that belong to the player (drawn ghosted for them only) */
-  myDecoys?: ReadonlySet<number>;
-  /** player is wearing a Mimic disguise */
-  disguised?: boolean;
-}
+export type { RenderOptions } from './layers/host';
 
 export const FONT_DISPLAY = '"Lilita One", "Fredoka", system-ui, sans-serif';
 export const FONT_BODY = '"Fredoka", system-ui, sans-serif';
 
-export class Renderer {
+export class Renderer implements LayerHost {
   readonly ctx: CanvasRenderingContext2D;
   readonly effects = new Effects();
   dpr = 1;
@@ -60,17 +53,10 @@ export class Renderer {
   private flashColor = '#ffffff';
   private rimDanger = 0;
 
-  /** 0..1 Blood Moon blend (smoothed) */
-  horror = 0;
-  /** 0..1 how close the nearest hunting wraith is to you */
-  fear = 0;
-  /** 0..1 caught in someone's Blackout */
-  blind = 0;
-  private bubbles = new Map<number, number>();
   readonly cinematic = new Cinematic();
-  private dark: HTMLCanvasElement = document.createElement('canvas');
-  private wraithSeen = new Map<number, number>();
-  private bolt = 0;
+  readonly blood: BloodMoonLayer = new BloodMoonLayer(this);
+  readonly darkness: DarknessLayer = new DarknessLayer(this);
+  readonly powers: PowersLayer = new PowersLayer(this);
 
   private visuals = new Map<number, CoreVisual>();
   private dustAnim = new Map<number, DustAnim>();
@@ -296,19 +282,14 @@ export class Renderer {
 
     this.effects.update(dt);
 
-    const bl = session.blood;
-    const target = bl.phase === 'dark' ? Math.min(1, bl.in / 3) : bl.phase === 'warn' ? 0.5 * clamp(1 - bl.in / 6, 0, 1) : 0;
-    this.horror += (target - this.horror) * damp(bl.phase === 'dark' ? 3 : 1.2, dt);
-    if (this.horror < 0.002) this.horror = 0;
-    if (bl.phase === 'dark' && Math.random() < dt * 0.22) this.bolt = 1;
-    this.bolt = Math.max(0, this.bolt - dt * 5);
+    this.blood.update(session, dt);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawBackground(ctx);
-    if (this.horror > 0) this.drawBloodSky(ctx);
+    if (this.blood.horror > 0) this.blood.drawSky(ctx);
 
     // world space
-    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - this.cam.x * z + this.shakeX), dpr * (h / 2 - this.cam.y * z + this.shakeY));
+    this.applyWorldTransform(ctx);
     const px = 1 / z;
     const view = {
       x0: this.cam.x - w / 2 / z - 60,
@@ -320,256 +301,27 @@ export class Renderer {
     this.drawStarfall(ctx, session, px);
     this.drawDust(ctx, session, view);
     this.drawFreeMoons(ctx, session, view, px);
-    this.drawSunstones(ctx, session, view, px);
-    this.drawPowerWorld(ctx, session, px, opts);
+    this.blood.drawSunstones(ctx, session, view, px);
+    this.powers.drawWorld(ctx, session, px, opts);
     this.drawCores(ctx, session, view, px, opts);
-    this.drawWraiths(ctx, session, view, px, opts, dt);
+    this.blood.drawWraiths(ctx, session, view, px, opts, dt);
     this.effects.draw(ctx, px, FONT_DISPLAY);
 
     // screen space overlays
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if ((this.horror > 0.05 || this.blind > 0.02) && !opts.attract) this.drawDarkness(ctx, session, opts);
+    if (this.darkness.active(this.blood.horror) && !opts.attract) this.darkness.draw(ctx, session, opts, this.blood.horror);
     this.drawOverlays(ctx, session, opts);
+    this.blood.drawOverlay(ctx);
     this.cinematic.draw(ctx, w, h);
   }
 
-  private toScreen(ctx: CanvasRenderingContext2D): void {
+  applyWorldTransform(ctx: CanvasRenderingContext2D): void {
     const { dpr, w, h } = this;
     const z = this.cam.zoom;
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - this.cam.x * z + this.shakeX), dpr * (h / 2 - this.cam.y * z + this.shakeY));
   }
 
   // ───────────────────────────────────────── Blood Moon
-
-  private drawBloodSky(ctx: CanvasRenderingContext2D): void {
-    const { w, h } = this;
-    const k = this.horror;
-    ctx.fillStyle = `rgba(60,0,12,${0.6 * k})`;
-    ctx.fillRect(0, 0, w, h);
-    // the moon rises as the event takes hold
-    const R = Math.min(w, h) * 0.34;
-    const x = w * 0.7 - this.cam.x * 0.01;
-    const y = h * 0.28 + (1 - k) * h * 0.7 - this.cam.y * 0.01;
-    ctx.globalAlpha = k;
-    const halo = R * 3.2;
-    ctx.drawImage(glowSprite('rgba(255,30,50,0.55)'), x - halo / 2, y - halo / 2, halo, halo);
-    const g = ctx.createRadialGradient(x - R * 0.3, y - R * 0.3, R * 0.1, x, y, R);
-    g.addColorStop(0, '#E0263F');
-    g.addColorStop(0.7, '#9C0E25');
-    g.addColorStop(1, '#4A0310');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, R, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(40,0,8,0.45)';
-    for (const [cx, cy, cr] of [[-0.35, -0.1, 0.2], [0.25, 0.3, 0.16], [0.1, -0.4, 0.12], [-0.1, 0.45, 0.09], [0.45, -0.05, 0.08]]) {
-      ctx.beginPath();
-      ctx.arc(x + cx * R, y + cy * R, cr * R, 0, TAU);
-      ctx.fill();
-    }
-    // a faint face in the craters — only noticed on a second look
-    ctx.fillStyle = `rgba(20,0,4,${0.35 * k})`;
-    ctx.beginPath();
-    ctx.ellipse(x - R * 0.28, y - R * 0.05, R * 0.09, R * 0.05, 0.3, 0, TAU);
-    ctx.ellipse(x + R * 0.22, y - R * 0.1, R * 0.09, R * 0.05, -0.3, 0, TAU);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
-  bubble(id: number, secs: number): void {
-    this.bubbles.set(id, this.time + secs);
-  }
-
-  /** Wormholes, snares and blackout zones (world space). */
-  private drawPowerWorld(ctx: CanvasRenderingContext2D, session: Session, px: number, opts: RenderOptions): void {
-    const t = this.time;
-    const me = opts.meId !== null ? session.cores.get(opts.meId) : undefined;
-    for (const wh of session.worms) {
-      if (!this.isVisible(wh.x, wh.y, 80)) continue;
-      const mine = wh.owner === opts.meId;
-      const R = 34;
-      ctx.drawImage(glowSprite('rgba(124,92,255,0.6)'), wh.x - R * 2.5, wh.y - R * 2.5, R * 5, R * 5);
-      ctx.save();
-      ctx.translate(wh.x, wh.y);
-      for (let i = 0; i < 4; i++) {
-        ctx.rotate(t * (2 + i * 0.6) * (i % 2 ? -1 : 1) * 0.6);
-        ctx.strokeStyle = i % 2 ? '#62F2FF' : '#7C5CFF';
-        ctx.lineWidth = Math.max(4 - i * 0.6, 1.5 * px);
-        ctx.beginPath();
-        ctx.arc(0, 0, R * (1 - i * 0.2), 0, Math.PI * 1.3);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#0A0613';
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.32, 0, TAU);
-      ctx.fill();
-      ctx.restore();
-      if (mine && me) {
-        ctx.strokeStyle = 'rgba(124,92,255,0.45)';
-        ctx.lineWidth = Math.max(2, 1.5 * px);
-        ctx.setLineDash([10, 12]);
-        ctx.lineDashOffset = -t * 40;
-        ctx.beginPath();
-        ctx.moveTo(me.x, me.y);
-        ctx.lineTo(wh.x, wh.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-    for (const tr of session.traps) {
-      const mine = tr.owner === opts.meId;
-      let a = mine ? 0.9 : 0;
-      if (!mine && me) {
-        // others only notice a faint shimmer when they're right on top of it
-        const d = Math.hypot(me.x - tr.x, me.y - tr.y);
-        a = clamp(1 - d / 260, 0, 1) * 0.28 * (0.6 + 0.4 * Math.sin(t * 9 + tr.id));
-      }
-      if (a <= 0.01 || !this.isVisible(tr.x, tr.y, 40)) continue;
-      ctx.save();
-      ctx.translate(tr.x, tr.y);
-      ctx.rotate(t * 0.8);
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = '#5EE6B0';
-      ctx.lineWidth = Math.max(2.5, 1.5 * px);
-      ctx.lineCap = 'round';
-      for (let i = 0; i < 6; i++) {
-        const ang = (i / 6) * TAU;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(ang) * SNARE_RADIUS * 1.3, Math.sin(ang) * SNARE_RADIUS * 1.3);
-        ctx.stroke();
-      }
-      for (const rr of [0.5, 0.95]) {
-        ctx.beginPath();
-        for (let i = 0; i <= 6; i++) {
-          const ang = (i / 6) * TAU;
-          ctx.lineTo(Math.cos(ang) * SNARE_RADIUS * rr, Math.sin(ang) * SNARE_RADIUS * rr);
-        }
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-    for (const b of session.blackouts) {
-      if (b.owner !== opts.meId) continue;
-      ctx.strokeStyle = 'rgba(160,120,255,0.5)';
-      ctx.lineWidth = Math.max(6, 3 * px);
-      ctx.setLineDash([24, 18]);
-      ctx.lineDashOffset = t * 30;
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, TAU);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(40,20,90,0.12)';
-      ctx.fill();
-    }
-  }
-
-  private drawSunstones(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
-    const t = this.time;
-    for (const s of session.sunstones) {
-      if (s.x < view.x0 || s.x > view.x1 || s.y < view.y0 || s.y > view.y1) continue;
-      const bob = Math.sin(t * 3 + s.id) * 4;
-      const glow = 150 + Math.sin(t * 5 + s.id) * 15;
-      ctx.drawImage(glowSprite('rgba(255,200,60,0.7)'), s.x - glow / 2, s.y - glow / 2 + bob, glow, glow);
-      ctx.save();
-      ctx.translate(s.x, s.y + bob);
-      drawSunstone(ctx, 16, t, px);
-      ctx.restore();
-    }
-  }
-
-  private drawWraiths(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }, px: number, opts: RenderOptions, dt: number): void {
-    const t = this.time;
-    const me = opts.meId !== null ? session.cores.get(opts.meId) : undefined;
-    const alive = new Set<number>();
-    for (const wr of session.wraiths) {
-      alive.add(wr.id);
-      if (!this.wraithSeen.has(wr.id)) {
-        this.wraithSeen.set(wr.id, t);
-        if (this.isVisible(wr.x, wr.y, 50)) this.effects.ring(wr.x, wr.y + WRAITH_RADIUS, '#8E0F24', 10, 90, 0.6, 8);
-      }
-      if (wr.x < view.x0 - 60 || wr.x > view.x1 + 60 || wr.y < view.y0 - 60 || wr.y > view.y1 + 60) continue;
-      const rise = clamp((t - this.wraithSeen.get(wr.id)!) / 0.9, 0, 1);
-      const d = me ? Math.hypot(me.x - wr.x, me.y - wr.y) : 9999;
-      const maw = clamp(1 - d / 320, 0, 1);
-      const dir = Math.atan2(wr.vy, wr.vx);
-      // shadow pool + smoke
-      ctx.fillStyle = wr.scared ? 'rgba(120,180,255,0.18)' : 'rgba(0,0,0,0.5)';
-      ctx.beginPath();
-      ctx.ellipse(wr.x, wr.y + WRAITH_RADIUS * 0.9, WRAITH_RADIUS * 1.1, WRAITH_RADIUS * 0.35, 0, 0, TAU);
-      ctx.fill();
-      if (this.quality === 'high' && Math.random() < dt * 30) {
-        this.effects.dot(wr.x + (Math.random() - 0.5) * 30, wr.y + WRAITH_RADIUS * 0.6, -wr.vx * 0.2, -wr.vy * 0.2 - 20, wr.scared ? 'rgba(170,220,255,0.5)' : 'rgba(60,0,20,0.7)', 9, 0.7);
-      }
-      const flicker = wr.stagger > 0 ? 0.5 + 0.5 * Math.sin(t * 60) : 1;
-      ctx.save();
-      ctx.translate(wr.x, wr.y + Math.sin(t * 4 + wr.id) * 4);
-      ctx.globalAlpha = flicker;
-      drawWraith(ctx, WRAITH_RADIUS, { dir, scared: wr.scared, maw, rise, t: t + wr.id, eyes: true }, px);
-      ctx.restore();
-    }
-    for (const id of this.wraithSeen.keys()) if (!alive.has(id)) this.wraithSeen.delete(id);
-  }
-
-  /** Flashlight darkness: only light sources cut through. Eyes glow on top. */
-  private drawDarkness(ctx: CanvasRenderingContext2D, session: Session, opts: RenderOptions): void {
-    const level = Math.max(clamp((this.horror - 0.25) / 0.75, 0, 1), this.blind);
-    if (level <= 0) return;
-    const blindMix = this.blind > 0 ? this.blind : 0;
-    const { w, h } = this;
-    const scale = 0.5;
-    const dw = Math.ceil(w * scale);
-    const dh = Math.ceil(h * scale);
-    const c = this.dark;
-    if (c.width !== dw || c.height !== dh) {
-      c.width = dw;
-      c.height = dh;
-    }
-    const g = c.getContext('2d')!;
-    g.globalCompositeOperation = 'source-over';
-    g.clearRect(0, 0, dw, dh);
-    g.fillStyle = blindMix > 0.5 ? `rgba(10,2,26,${0.97 * level})` : `rgba(4,0,6,${0.95 * level})`;
-    g.fillRect(0, 0, dw, dh);
-    g.globalCompositeOperation = 'destination-out';
-    const light = glowSprite('rgba(255,255,255,1)');
-    const z = this.cam.zoom;
-    const hole = (x: number, y: number, r: number) => {
-      const sp = this.worldToScreen(x, y);
-      const rr = r * z * scale * 2;
-      g.drawImage(light, sp.x * scale - rr / 2, sp.y * scale - rr / 2, rr, rr);
-    };
-    const me = opts.meId !== null ? session.cores.get(opts.meId) : undefined;
-    if (me) {
-      const flick = 1 + Math.sin(this.time * 17) * 0.02 + (Math.random() - 0.5) * 0.03;
-      const full = (me.orbitR * 1.35 + 240) * (me.radiant > 0 ? 1.8 : 1);
-      const r = (full + (me.orbitR + 90 - full) * blindMix) * flick;
-      hole(me.x, me.y, r);
-      hole(me.x, me.y, r * 0.6);
-    }
-    for (const s of session.sunstones) hole(s.x, s.y, 170);
-    for (const c2 of session.cores.values()) if (c2.radiant > 0 && c2 !== me) hole(c2.x, c2.y, 300);
-    ctx.drawImage(c, 0, 0, w, h);
-
-    // eyes and sunstone glints pierce the dark
-    this.toScreen(ctx);
-    const t = this.time;
-    for (const wr of session.wraiths) {
-      if (!this.isVisible(wr.x, wr.y, 40)) continue;
-      ctx.save();
-      ctx.translate(wr.x, wr.y + Math.sin(t * 4 + wr.id) * 4);
-      ctx.globalAlpha = level;
-      drawWraithEyes(ctx, WRAITH_RADIUS, { dir: Math.atan2(wr.vy, wr.vx), scared: wr.scared, maw: 0, rise: 1, t: t + wr.id, eyes: true });
-      ctx.restore();
-    }
-    for (const s of session.sunstones) {
-      if (!this.isVisible(s.x, s.y, 40)) continue;
-      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 6 + s.id);
-      ctx.fillStyle = '#FFE45C';
-      drawStar(ctx, s.x, s.y, 14, 4, t);
-    }
-    ctx.globalAlpha = 1;
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-  }
 
   private drawBackground(ctx: CanvasRenderingContext2D): void {
     const { w, h } = this;
@@ -602,7 +354,7 @@ export class Renderer {
     }
   }
 
-  private drawArena(ctx: CanvasRenderingContext2D, R: number, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+  private drawArena(ctx: CanvasRenderingContext2D, R: number, view: ViewRect, px: number): void {
     // floor dots (only inside the arena)
     if (this.gridPattern) {
       ctx.save();
@@ -696,7 +448,7 @@ export class Renderer {
     }
   }
 
-  private drawDust(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }): void {
+  private drawDust(ctx: CanvasRenderingContext2D, session: Session, view: ViewRect): void {
     const t = this.time;
     const low = this.quality === 'low';
     for (const d of session.dust.values()) {
@@ -733,7 +485,7 @@ export class Renderer {
     }
   }
 
-  private drawFreeMoons(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+  private drawFreeMoons(ctx: CanvasRenderingContext2D, session: Session, view: ViewRect, px: number): void {
     const t = this.time;
     for (const m of session.freeMoons) {
       if (m.x < view.x0 || m.x > view.x1 || m.y < view.y0 || m.y > view.y1) continue;
@@ -768,7 +520,7 @@ export class Renderer {
     return v;
   }
 
-  private drawCores(ctx: CanvasRenderingContext2D, session: Session, view: { x0: number; y0: number; x1: number; y1: number }, px: number, opts: RenderOptions): void {
+  private drawCores(ctx: CanvasRenderingContext2D, session: Session, view: ViewRect, px: number, opts: RenderOptions): void {
     const t = this.time;
     const dt = 1 / 60;
     const visible: ViewCore[] = [];
@@ -859,7 +611,7 @@ export class Renderer {
         }
         ctx.restore();
       }
-      const spooky = c.id === opts.meId || c.radiant > 0 ? 0 : this.horror;
+      const spooky = c.id === opts.meId || c.radiant > 0 ? 0 : this.blood.horror;
 
       const myDecoy = opts.myDecoys?.has(c.id) ?? false;
       ctx.save();
@@ -873,20 +625,8 @@ export class Renderer {
       drawCoreBody(ctx, r, skin, { look: c.heading, blink: v.blink, mood, chomp: v.chomp, spooky }, t, px);
       ctx.restore();
 
-      const bub = (this.bubbles.get(c.id) ?? 0) - t;
-      if (bub > 0) {
-        const br = c.r + 18 + Math.sin(t * 7) * 3;
-        ctx.drawImage(glowSprite('rgba(122,211,255,0.35)'), c.x - br * 1.6, c.y - br * 1.6, br * 3.2, br * 3.2);
-        ctx.strokeStyle = `rgba(190,235,255,${bub < 0.6 ? 0.4 + 0.4 * Math.sin(t * 40) : 0.85})`;
-        ctx.lineWidth = Math.max(3, 2 * px);
-        ctx.beginPath();
-        ctx.arc(c.x, c.y, br, 0, TAU);
-        ctx.stroke();
-        ctx.fillStyle = 'rgba(255,255,255,0.7)';
-        ctx.beginPath();
-        ctx.ellipse(c.x - br * 0.45, c.y - br * 0.5, br * 0.18, br * 0.09, -0.7, 0, TAU);
-        ctx.fill();
-      } else if (c.shield > 0) {
+      const bubbled = this.powers.drawCoreDecor(ctx, c, r, px, opts, myDecoy);
+      if (!bubbled && c.shield > 0) {
         ctx.strokeStyle = 'rgba(255,255,255,0.6)';
         ctx.lineWidth = Math.max(2, 1.5 * px);
         ctx.beginPath();
@@ -901,53 +641,6 @@ export class Renderer {
         ctx.arc(c.x, c.y, c.orbitR * (1 + (1 - v.pulse) * 0.25), 0, TAU);
         ctx.stroke();
         ctx.globalAlpha = 1;
-      }
-      if (c.snared > 0) {
-        ctx.save();
-        ctx.translate(c.x, c.y);
-        ctx.strokeStyle = 'rgba(94,230,176,0.9)';
-        ctx.lineWidth = Math.max(2, 1.2 * px);
-        for (let i = 0; i < 5; i++) {
-          const a = i * 1.26 + c.id;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(a) * r * 1.25, Math.sin(a) * r * 1.25);
-          ctx.lineTo(Math.cos(a + 2.6) * r * 1.25, Math.sin(a + 2.6) * r * 1.25);
-          ctx.stroke();
-        }
-        ctx.beginPath();
-        ctx.arc(0, 0, r * 1.2, 0, TAU);
-        ctx.stroke();
-        ctx.restore();
-      }
-      if (myDecoy) {
-        ctx.strokeStyle = 'rgba(196,155,255,0.8)';
-        ctx.lineWidth = Math.max(2, 1.5 * px);
-        ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        ctx.arc(c.x, c.y, r + 6, 0, TAU);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      if (c.id === opts.meId && opts.disguised) {
-        // a little theatre mask so you remember you're in disguise
-        const mx = c.x + r * 0.9;
-        const my = c.y - r * 0.95;
-        const ms = Math.max(10 * px, r * 0.35);
-        ctx.fillStyle = '#FF9F43';
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = Math.max(2 * px, ms * 0.15);
-        ctx.beginPath();
-        ctx.moveTo(mx - ms, my - ms * 0.5);
-        ctx.quadraticCurveTo(mx, my - ms * 0.2, mx + ms, my - ms * 0.5);
-        ctx.quadraticCurveTo(mx + ms * 0.9, my + ms, mx, my + ms);
-        ctx.quadraticCurveTo(mx - ms * 0.9, my + ms, mx - ms, my - ms * 0.5);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = INK;
-        ctx.beginPath();
-        ctx.ellipse(mx - ms * 0.38, my, ms * 0.2, ms * 0.12, 0.3, 0, TAU);
-        ctx.ellipse(mx + ms * 0.38, my, ms * 0.2, ms * 0.12, -0.3, 0, TAU);
-        ctx.fill();
       }
       // heading chevron for the player
       if (c.id === opts.meId && !opts.attract) {
@@ -1050,19 +743,6 @@ export class Renderer {
       g.addColorStop(0, 'rgba(255,40,80,0)');
       g.addColorStop(1, `rgba(255,40,80,${0.45 * this.rimDanger * (0.75 + 0.25 * Math.sin(this.time * 10))})`);
       ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
-    }
-    // heartbeat vignette when something is hunting you
-    if (this.fear > 0.02) {
-      const beat = Math.pow(Math.max(0, Math.sin(this.time * (5 + this.fear * 6))), 6);
-      const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.22, w / 2, h / 2, Math.max(w, h) * 0.7);
-      g.addColorStop(0, 'rgba(120,0,20,0)');
-      g.addColorStop(1, `rgba(150,0,25,${(0.35 + beat * 0.4) * this.fear})`);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
-    }
-    if (this.bolt > 0.01) {
-      ctx.fillStyle = `rgba(255,220,230,${this.bolt * 0.22})`;
       ctx.fillRect(0, 0, w, h);
     }
     // starfall pointer when off-screen
